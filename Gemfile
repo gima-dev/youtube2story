@@ -6,3 +6,5 @@ gem 'sinatra'
 gem 'telegram-bot-ruby'
 gem 'puma'
 gem 'dotenv'
+
+gem "rackup", "~> 2.3"
