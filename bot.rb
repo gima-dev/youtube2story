@@ -7,6 +7,7 @@ $stdout.sync = true
 $stderr.sync = true
 
 TOKEN = ENV['TELEGRAM_BOT_TOKEN']
+WEBAPP_URL = ENV['WEBAPP_URL'] || 'https://gima.dedyn.io/app'
 
 puts "🤖 Бот запущен с polling..."
 puts "📅 Время запуска: #{Time.now}"
@@ -21,10 +22,16 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
       case text
       when '/start'
         puts "📨 Получено сообщение от #{message.from.first_name}: /start"
-        bot.api.send_message(chat_id: chat_id, text: "Закиньте сюда ссылку Youtube видео")
+        # Отправим кнопку, открывающую Web App
+        web_app_info = Telegram::Bot::Types::WebAppInfo.new(url: WEBAPP_URL)
+        keyboard_button = Telegram::Bot::Types::KeyboardButton.new(text: 'Открыть загрузчик', web_app: web_app_info)
+        keyboard = Telegram::Bot::Types::ReplyKeyboardMarkup.new(keyboard: [[keyboard_button]], resize_keyboard: true)
+
+        bot.api.send_message(chat_id: chat_id, text: "Нажмите кнопку, чтобы открыть загрузчик видео в Web App, или просто пришлите ссылку:", reply_markup: keyboard)
       else
         puts "📨 Получено сообщение от #{message.from.first_name}: #{text}"
-        bot.api.send_message(chat_id: chat_id, text: "Вы написали: #{text}")
+        # На случай если пользователь напрямую прислал ссылку — можно подсказать открыть Web App
+        bot.api.send_message(chat_id: chat_id, text: "Вы написали: #{text}\nЕсли хотите редактировать и опубликовать в историях, откройте загрузчик через кнопку.")
       end
     end
   end
