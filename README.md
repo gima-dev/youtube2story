@@ -32,17 +32,13 @@ ruby bot.rb
 ```
 
 Дальнейшие шаги:
-
 ## V2RayTun: защита правил Split‑Tunnel (Cloudflare)
-
 Если на системе используется `v2RayTun` (или похожий прокси), он может перехватывать весь исходящий трафик и мешать `cloudflared` регистрировать туннель у Cloudflare (ошибки TLS / 530). Чтобы это предотвратить, в репозитории есть скрипт и LaunchAgent, которые автоматически добавляют правило split‑tunnel для диапазонов Cloudflare.
 
 - Скрипт (в репозитории): `scripts/ensure_v2ray_split.py` — находит конфиги `v2RayTun` и добавляет/обновляет блок `routing` с правилом, которое отправляет диапазоны Cloudflare через `outbound` с тегом `direct`. Перед изменением создаётся резервная копия `*.bak.TIMESTAMP`.
 
 - Вручную выполнить проверку/применение:
-```bash
 # выполнить скрипт сразу
-/Users/gima/ruby_projects/youtube2story/scripts/ensure_v2ray_split.py '/Users/gima/Library/Group Containers/**/Configs/*.json'
 ```
 
 - Автоматически (рекомендуется): установлен LaunchAgent, который запускает скрипт каждые 15 минут и при логине пользователя. Файл LaunchAgent: `~/Library/LaunchAgents/com.gima.v2ray.ensure.plist`.
@@ -57,10 +53,82 @@ launchctl load ~/Library/LaunchAgents/com.gima.v2ray.ensure.plist
 /Users/gima/ruby_projects/youtube2story/scripts/ensure_v2ray_split.py '/Users/gima/Library/Group Containers/**/Configs/*.json'
 
 # посмотреть вывод
-tail -n 200 /tmp/ensure_v2ray_split.out
-tail -n 200 /tmp/ensure_v2ray_split.err
 ```
 
 Примечания:
 - Если `v2RayTun` хранит конфиг в другом месте, передайте путь скрипту как аргумент (см. выше).
 - Скрипт делает backup перед правками — при ошибке можно восстановить из `*.bak.TIMESTAMP`.
+
+## Использование `monit.rb` (примеры)
+
+В репозитории есть утилита `monit.rb` для удобного управления Monit/LaunchAgents и логами.
+
+Примеры команд (запускайте из корня проекта):
+
+```bash
+# Показать сводку (Monit + LaunchAgents + процессы)
+ruby monit.rb list
+
+# Показать статус сервиса в Monit
+ruby monit.rb monit-status cloudflared
+
+# Включить Monit-проверку для cloudflared (требуется sudo для записи в /usr/local/etc/monit.d)
+ruby monit.rb enable-monit-check cloudflared --plist ~/Library/LaunchAgents/com.gima.cloudflared.plist
+
+# Отключить Monit-проверку
+ruby monit.rb disable-monit-check cloudflared
+
+# Управление через launchctl (bootstrap/bootout) — укажите --via=launchctl и путь к plist
+ruby monit.rb start cloudflared --via=launchctl --plist ~/Library/LaunchAgents/com.gima.cloudflared.plist
+
+# Смотреть логи в реальном времени
+ruby monit.rb tail ~/Library/Logs/com.gima.cloudflared/cloudflared.err.log
+
+# Сделать скрипт исполняемым (однократно)
+chmod +x monit.rb
+```
+
+См. также `ruby monit.rb help` для полного списка команд и опций.
+
+## Оповещения при падении туннеля
+
+Примеры настройки уведомлений для Monit — два варианта: Email (SMTP) и Webhook (Slack/Discord/HTTP).
+
+- Email (Monit -> SMTP): добавьте в `/usr/local/etc/monitrc` (требуется указать рабочий SMTP-сервер):
+
+```monit
+set mailserver smtp.example.com port 587
+	username "user" password "secret" using tls
+set alert you@example.com
+```
+
+Monit сам пришлёт письма при срабатывании проверки (например, при `if failed ... then alert`).
+
+- Webhook (curl): если хотите отправлять HTTP-запросы, добавьте в проверку `cloudflared.mon` строку `then exec`:
+
+```monit
+check process cloudflared matching "cloudflared"
+	start program = "/bin/launchctl bootstrap gui/504 ~/Library/LaunchAgents/com.gima.cloudflared.plist"
+	stop program  = "/bin/launchctl bootout gui/504 ~/Library/LaunchAgents/com.gima.cloudflared.plist"
+	if failed host 127.0.0.1 port 20241 for 2 cycles then exec "/usr/bin/env bash -c 'curl -fsS -X POST -H "Content-Type: application/json" -d \"{\\\"text\\\":\\\"cloudflared tunnel down on $(hostname)\\\"}\" \"$MONIT_WEBHOOK_URL\"'"
+	group cloudflared
+```
+
+Удобно задать `MONIT_WEBHOOK_URL` в окружении `/etc/monitrc` или в wrapper-скрипте, который запускает Monit.
+
+Проверка конфигурации и перезагрузка Monit:
+
+```bash
+sudo monit -t
+sudo monit reload
+sudo monit status cloudflared
+```
+
+Для теста можно остановить сервис вручную и посмотреть срабатывание:
+
+```bash
+sudo monit stop cloudflared
+# потом вернуть
+sudo monit start cloudflared
+```
+
