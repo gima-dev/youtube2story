@@ -1,0 +1,21 @@
+set daemon 60
+set logfile /usr/local/var/log/monit.log
+
+set httpd port 2812 and
+  use address 127.0.0.1
+  allow 127.0.0.1
+  # Web UI credentials (replace CHANGEME with secure password)
+  allow admin:CHANGEME
+    allow admin:
+
+# Web: проверяет HTTPS на localhost:443 и перезагружает LaunchAgent если упал
+check host y2s_web with address 127.0.0.1
+  if failed port 443 protocol https with timeout 10 seconds then exec "/bin/sh -c 'launchctl unload ~/Library/LaunchAgents/com.y2s.web.plist 2>/dev/null || true; sleep 1; launchctl load ~/Library/LaunchAgents/com.y2s.web.plist'"
+
+# Bot: проверяет запущенный процесс по совпадению 'bot.rb'
+check process y2s_bot matching "bot.rb"
+  start program = "/bin/sh -c 'launchctl load ~/Library/LaunchAgents/com.y2s.bot.plist'"
+  stop program  = "/bin/sh -c 'launchctl unload ~/Library/LaunchAgents/com.y2s.bot.plist'"
+
+# Optional: alert example (configure SMTP separately)
+# set alert you@example.com
