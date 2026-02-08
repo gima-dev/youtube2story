@@ -17,6 +17,64 @@ def header(title)
   puts "\n=== #{title} ==="
 end
 
+def pretty_monit_summary
+  out = capture('monit summary')
+  if system('which column > /dev/null 2>&1')
+    table_in = out.gsub(/\s{2,}/, "\t")
+    formatted = IO.popen(['column','-t','-s','\t'], 'r+') do |io|
+      io.write(table_in)
+      io.close_write
+      io.read
+    end
+    # colorize statuses for tty
+    if $stdout.tty?
+      formatted.lines.each do |line|
+        l = line.dup
+        l.gsub!(/\bOK\b/, colorize('OK', :green))
+        l.gsub!(/\bRunning\b/, colorize('Running', :green))
+        l.gsub!(/\bMonitored\b/, colorize('Monitored', :green))
+        l.gsub!(/\bStopped\b/, colorize('Stopped', :yellow))
+        l.gsub!(/\bFailed\b/, colorize('Failed', :red))
+        l.gsub!(/\bNot monitored\b/i, colorize('Not monitored', :red))
+        l.gsub!(/\bWarning\b/i, colorize('Warning', :yellow))
+        puts l
+      end
+    else
+      puts formatted
+    end
+  else
+    puts out
+  end
+end
+
+def colorize(text, color)
+  codes = { red: 31, green: 32, yellow: 33, blue: 34, magenta: 35, cyan: 36 }
+  code = codes[color] || 0
+  "\e[#{code}m#{text}\e[0m"
+end
+
+def pretty_monit_status(name)
+  out = capture("monit status #{name}")
+  # try simple key: value alignment
+  lines = out.lines
+  pairs = lines.map do |l|
+    if l.include?(':')
+      k,v = l.split(':',2)
+      [k.strip, v.strip]
+    else
+      [l.rstrip, nil]
+    end
+  end
+  key_width = pairs.map{|k,v| k ? k.length : 0}.max || 0
+  pairs.each do |k,v|
+    if v
+      puts sprintf("%-#{key_width}s : %s", k, v)
+    else
+      puts k
+    end
+  end
+end
+
 def help
   puts <<~HELP
     Usage: monit.rb <command> [options]
@@ -71,7 +129,9 @@ when 'list'
   puts capture("launchctl list | grep com.gima || true")
 
   header('Relevant processes (cloudflared, ruby, web.rb, nginx)')
-  puts capture("ps aux | egrep 'cloudflared|ruby|web.rb|nginx' | egrep -v 'egrep|monit.rb' || true")
+  # compact process listing: show USER PID %CPU %MEM COMMAND (no long env prefixes)
+  # macOS ps doesn't support user:20 width specifier in some environments; use simple columns
+  puts capture("ps -axo user,pid,pcpu,pmem,comm | egrep 'cloudflared|ruby|web.rb|nginx' || true")
 
 when 'monit-summary'
   unless system('which monit > /dev/null 2>&1')
@@ -79,7 +139,7 @@ when 'monit-summary'
     exit 1
   end
   header('monit summary')
-  puts capture('monit summary')
+  pretty_monit_summary
 
 when 'monit-status'
   name = ARGV.shift
@@ -88,7 +148,7 @@ when 'monit-status'
     exit 1
   end
   header("monit status #{name}")
-  system("monit status #{name}")
+  pretty_monit_status(name)
 
 when 'launchctl-list'
   header('launchctl list (com.gima.*)')
