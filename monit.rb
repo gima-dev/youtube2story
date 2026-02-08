@@ -1,5 +1,15 @@
 #!/usr/bin/env ruby
 # monit.rb — удобный просмотр и управление процессами/агентами для проекта
+#
+# Короткий пример использования (также доступна команда `monitrb`, если вы
+# сделали символьную ссылку в /usr/local/bin):
+#
+#   monitrb list
+#   sudo monitrb monit-summary
+#   monitrb monit-status cloudflared
+#   monitrb enable-monit-check cloudflared --plist ~/Library/LaunchAgents/com.gima.cloudflared.plist
+#   monitrb tail ~/Library/Logs/com.gima.cloudflared/cloudflared.err.log
+#
 require 'optparse'
 
 def run(cmd)
