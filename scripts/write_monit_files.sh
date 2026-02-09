@@ -23,7 +23,25 @@ EOF
 sudo mv /tmp/y2s_web.mon /usr/local/etc/monit.d/y2s_web.mon
 sudo mv /tmp/y2s_bot.mon /usr/local/etc/monit.d/y2s_bot.mon
 sudo mv /tmp/nginx.mon /usr/local/etc/monit.d/nginx.mon || true
+cat > /tmp/cloudflared.mon <<EOF
+check process cloudflared matching "cloudflared"
+  if does not exist for 2 cycles then alert
+  group cloudflared
+EOF
+
+sudo mv /tmp/cloudflared.mon /usr/local/etc/monit.d/cloudflared.mon || true
 sudo chmod 0644 /usr/local/etc/monit.d/y2s_web.mon /usr/local/etc/monit.d/y2s_bot.mon /usr/local/etc/monit.d/nginx.mon 2>/dev/null || true
+sudo chmod 0644 /usr/local/etc/monit.d/cloudflared.mon 2>/dev/null || true
+
+# Public HTTPS check via Cloudflare edge
+cat > /tmp/youtube_public.mon <<EOF
+check host youtube_public with address youtube.gimadev.win
+  if failed port 443 protocol https with timeout 10 seconds for 3 cycles then alert
+  group web
+EOF
+
+sudo mv /tmp/youtube_public.mon /usr/local/etc/monit.d/youtube_public.mon || true
+sudo chmod 0644 /usr/local/etc/monit.d/youtube_public.mon 2>/dev/null || true
 
 echo '=== monit -t ==='
 sudo monit -t || true
