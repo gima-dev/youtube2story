@@ -63,6 +63,24 @@ launchctl load ~/Library/LaunchAgents/com.gima.v2ray.ensure.plist
 
 Утилита `monit.rb` удалена — используйте Monit напрямую (`monit` / `monitrc` / `/usr/local/etc/monit.d`) и `launchctl`/`brew services` для управления агентов.
 
+Важно: в этом репозитории Monit теперь настроен в режиме *alert‑only* — Monit выполняет health‑checks и отправляет оповещения, но не пытается напрямую запускать сервисы. За автоперсистентность и перезапуск отвечает `launchd` (LaunchAgents/KeepAlive).
+
+Ключевые команды:
+
+```bash
+# Проверить синтаксис конфигурации Monit
+sudo monit -t
+
+# Перезагрузить Monit после правок
+sudo monit reload
+
+# Посмотреть статус/сводку
+sudo monit status
+sudo monit summary
+```
+
+Файл `scripts/write_monit_files.sh` генерирует alert‑only проверки (`/usr/local/etc/monit.d/*.mon`). Если хотите вернуть поведение, при котором Monit управляет запуском/остановкой через `launchctl`, это можно сделать вручную в соответствующих `.mon` файлах.
+
 ## Оповещения при падении туннеля
 
 Примеры настройки уведомлений для Monit — два варианта: Email (SMTP) и Webhook (Slack/Discord/HTTP).
