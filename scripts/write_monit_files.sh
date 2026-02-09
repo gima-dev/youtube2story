@@ -39,5 +39,3 @@ sudo monit status y2s_web || true
 echo '=== monit status y2s_bot ==='
 sudo monit status y2s_bot || true
 
-echo '=== monit-view --full ==='
-ruby /Users/gima/ruby_projects/youtube2story/monit.rb monit-view --full || true

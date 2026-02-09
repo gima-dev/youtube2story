@@ -59,36 +59,9 @@ launchctl load ~/Library/LaunchAgents/com.gima.v2ray.ensure.plist
 - Если `v2RayTun` хранит конфиг в другом месте, передайте путь скрипту как аргумент (см. выше).
 - Скрипт делает backup перед правками — при ошибке можно восстановить из `*.bak.TIMESTAMP`.
 
-## Использование `monit.rb` (примеры)
+## Примечание по Monit
 
-В репозитории есть утилита `monit.rb` для удобного управления Monit/LaunchAgents и логами.
-
-Примеры команд (запускайте из корня проекта):
-
-```bash
-# Показать сводку (Monit + LaunchAgents + процессы)
-ruby monit.rb list
-
-# Показать статус сервиса в Monit
-ruby monit.rb monit-status cloudflared
-
-# Включить Monit-проверку для cloudflared (требуется sudo для записи в /usr/local/etc/monit.d)
-ruby monit.rb enable-monit-check cloudflared --plist ~/Library/LaunchAgents/com.gima.cloudflared.plist
-
-# Отключить Monit-проверку
-ruby monit.rb disable-monit-check cloudflared
-
-# Управление через launchctl (bootstrap/bootout) — укажите --via=launchctl и путь к plist
-ruby monit.rb start cloudflared --via=launchctl --plist ~/Library/LaunchAgents/com.gima.cloudflared.plist
-
-# Смотреть логи в реальном времени
-ruby monit.rb tail ~/Library/Logs/com.gima.cloudflared/cloudflared.err.log
-
-# Сделать скрипт исполняемым (однократно)
-chmod +x monit.rb
-```
-
-См. также `ruby monit.rb help` для полного списка команд и опций.
+Утилита `monit.rb` удалена — используйте Monit напрямую (`monit` / `monitrc` / `/usr/local/etc/monit.d`) и `launchctl`/`brew services` для управления агентов.
 
 ## Оповещения при падении туннеля
 
