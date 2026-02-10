@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.y2s.sidekiq</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-l</string>
+    <string>-c</string>
+    <string>/Users/gima/ruby_projects/youtube2story/scripts/start_sidekiq.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/gima/ruby_projects/youtube2story</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/gima/ruby_projects/youtube2story/log/sidekiq.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/gima/ruby_projects/youtube2story/log/sidekiq.err.log</string>
+</dict>
+</plist>

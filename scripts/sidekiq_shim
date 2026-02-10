@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Minimal shim to run Sidekiq via bundler/setup (avoids binstub activation issues)
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_ROOT" || exit 1
+mkdir -p log
+
+export BUNDLE_GEMFILE="$PROJECT_ROOT/Gemfile"
+export GEM_HOME="$PROJECT_ROOT/vendor/bundle"
+export GEM_PATH="$GEM_HOME"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PROJECT_ROOT/vendor/bundle/bin:$PATH"
+
+exec ruby -rbundler/setup -S sidekiq -r "$PROJECT_ROOT"/workers/process_worker.rb >> "$PROJECT_ROOT"/log/sidekiq.log 2>> "$PROJECT_ROOT"/log/sidekiq.err.log

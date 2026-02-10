@@ -19,3 +19,9 @@ check process y2s_bot matching "bot.rb"
 
 # Optional: alert example (configure SMTP separately)
 # set alert you@example.com
+
+# Sidekiq: monitor Sidekiq worker launched via LaunchAgent
+check process y2s_sidekiq matching "sidekiq"
+  start program = "/bin/sh -c 'launchctl load ~/Library/LaunchAgents/com.y2s.sidekiq.plist'"
+  stop program  = "/bin/sh -c 'launchctl unload ~/Library/LaunchAgents/com.y2s.sidekiq.plist'"
+

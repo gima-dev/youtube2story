@@ -115,6 +115,44 @@ sudo monit reload
 sudo monit status cloudflared
 ```
 
+## Текущая архитектура TLS / проксирования (nginx + web.rb)
+
+Кратко: TLS теперь терминруется в `nginx`, а `web.rb` работает как локальный HTTP‑бекенд.
+
+  затем проксирует запросы на `http://127.0.0.1:8080`.
+
+Практические команды и заметки:
+
+```bash
+# Перезагрузить nginx (требуется, если меняли конфиг или сертификаты)
+sudo nginx -t
+sudo brew services restart nginx
+
+# Перезапустить локальный web агент (LaunchAgent)
+launchctl kickstart -k gui/$(id -u)/com.y2s.web || launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.y2s.web.plist
+
+# Проверки
+curl -I https://127.0.0.1/      # локальная проверка nginx:443 (может требовать --insecure при Origin CA)
+curl -I http://127.0.0.1:8080/   # проверка backend (web.rb)
+
+# Монит: проверяет и nginx:443 и публичный endpoint через Cloudflare
+sudo monit -t && sudo monit reload
+sudo monit status nginx
+sudo monit status youtube_public
+```
+
+Background jobs (Sidekiq)
+--------------------------------
+I added optional Sidekiq/Redis support to run `yt-dlp`/`ffmpeg` asynchronously: see `workers/process_worker.rb` and `README_SIDEKIQ.md` for setup commands. Flow:
+
+- Client POSTs to `/process` → `web.rb` enqueues `ProcessWorker` and returns 202 + job_id.
+- Run `redis` and `sidekiq` to process jobs and write outputs into `web_public/outputs` (served by nginx).
+
+See `README_SIDEKIQ.md` for quick start commands.
+
+Если хотите, чтобы `web.rb` снова обслуживал TLS напрямую — можно вернуть SSL переменные `SSL_CERT`/`SSL_KEY` в `~/Library/LaunchAgents/com.y2s.web.plist`, но текущая конфигурация с `nginx` предпочтительнее для кэширования, HTTP/2 и централизованного управления сертификатами.
+
+
 Для теста можно остановить сервис вручную и посмотреть срабатывание:
 
 ```bash

@@ -1,2 +1,15 @@
+# Ignore vendored gems and runtime artifacts
+vendor/
+vendor/bundle/
+.bundle/
+
+# macOS
+.DS_Store
+
+# logs and temp
+/tmp/
+log/
+log/*.log
+outputs/
 .env
 .vscode/settings.json
