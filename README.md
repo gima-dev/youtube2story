@@ -141,6 +141,62 @@ sudo monit status nginx
 sudo monit status youtube_public
 ```
 
+**Monit Checks Added**
+- **gimadev_public**: проверяет публичный HTTPS endpoint `gimadev.win` через порт `443` (пробная таймаут‑попытка 15s, alert после 3 циклов). Файл: `/usr/local/etc/monit.d/gimadev_public_http.mon`. Это правило только оповещает — Monit не выполняет рестарт облачной инфраструктуры.
+- **origin_local**: проверяет локальный origin на `127.0.0.1:8080` и при недоступности выполняет скрипт запуска `scripts/start_web.sh`. Файл: `/usr/local/etc/monit.d/gimadev_origin.mon`. Ограничение: скрипт должен запускать сервис в фоне или корректно возвращать управление (pidfile не обязателен, Monit тут использует исполнение внешней команды).
+
+Проверки и перезагрузка Monit (после правок):
+```bash
+sudo monit -t
+sudo monit reload
+sudo monit summary
+sudo monit status gimadev_public
+sudo monit status origin_local
+```
+
+Если хотите, добавлю правило для `autossh` или скрипт `check_cloudflared.sh` (ssh → VPS) в отдельный `check program`.
+
+## Дополнительные примеры Monit (опционально)
+
+Ниже — компактные примеры, которые можно добавить в `/usr/local/etc/monit.d/` при желании.
+
+- `autossh` (macOS user agent)
+
+```monit
+check process autossh with matching "/usr/local/bin/autossh"
+	start program = "/bin/launchctl load /Users/gima/Library/LaunchAgents/com.y2s.autossh.plist"
+	stop program  = "/bin/launchctl unload /Users/gima/Library/LaunchAgents/com.y2s.autossh.plist"
+	if not running then restart
+	if 5 restarts within 5 cycles then alert
+```
+
+- `cloudflared` remote check via SSH (check program)
+
+Создайте `/usr/local/bin/check_cloudflared.sh`:
+
+```bash
+#!/bin/sh
+# returns 0 if cloudflared is active on the VPS
+ssh -o BatchMode=yes -o ConnectTimeout=5 gima@46.224.178.2 'systemctl is-active cloudflared' 2>/dev/null | grep -q '^active$'
+```
+
+Сделайте файл исполняемым: `chmod +x /usr/local/bin/check_cloudflared.sh`.
+
+И правило Monit:
+
+```monit
+check program cloudflared_ssh with path /usr/local/bin/check_cloudflared.sh
+	if status != 0 then alert
+```
+
+Примечания:
+- SSH‑ключи должны быть настроены без пароля для пользователя `gima` на VPS, иначе Monit не сможет выполнить проверку без интерактивного ввода.
+- Правило для `autossh` использует `launchctl` — убедитесь, что Monit запускается с правами, позволяющими управлять пользовательскими LaunchAgents.
+
+---
+
+Готов добавить эти примеры в конфигурацию или помочь с настройкой SSH‑ключей и правами, если нужно.
+
 Background jobs (Sidekiq)
 --------------------------------
 I added optional Sidekiq/Redis support to run `yt-dlp`/`ffmpeg` asynchronously: see `workers/process_worker.rb` and `README_SIDEKIQ.md` for setup commands. Flow:
