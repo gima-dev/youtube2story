@@ -13,3 +13,4 @@ log/*.log
 outputs/
 .env
 .vscode/settings.json
+::1
