@@ -4,8 +4,6 @@ ensure_v2ray_split.py
 
 Найти конфиги v2RayTun и добавить/обновить routing правило,
 которое направляет диапазоны Cloudflare через outbound с тегом "direct".
-Если в конфиге отсутствует outbound с тегом "direct", скрипт добавит
-outbound типа "freedom" с `streamSettings.network = tcp` (raw TCP).
 
 Использование:
   ./ensure_v2ray_split.py [paths...]
@@ -59,26 +57,6 @@ def backup_file(path):
     return bak
 
 
-def ensure_outbound(data, tag="direct"):
-    outs = data.get("outbounds")
-    if not isinstance(outs, list):
-        outs = []
-
-    for o in outs:
-        if o.get("tag") == tag:
-            return False
-
-    out = {
-        "protocol": "freedom",
-        "settings": {},
-        "tag": tag,
-        "streamSettings": {"network": "tcp"},
-    }
-    outs.append(out)
-    data["outbounds"] = outs
-    return True
-
-
 def ensure_routing(data):
     routing = data.get("routing")
     rule = {
@@ -124,14 +102,7 @@ def process_file(path):
         print(f"SKIP {path}: failed to read JSON: {e}")
         return False
 
-    changed = False
-    if ensure_routing(data):
-        changed = True
-
-    # Ensure outbound 'direct' exists and uses TCP (raw TCP freedom)
-    if ensure_outbound(data, tag="direct"):
-        changed = True
-
+    changed = ensure_routing(data)
     if not changed:
         print(f"NOCHANGE {path}")
         return False

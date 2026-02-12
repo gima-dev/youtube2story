@@ -1,0 +1,14 @@
+{
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "ip": [
+          "198.18.0.0/15"
+        ],
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}
