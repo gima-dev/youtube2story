@@ -31,7 +31,7 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
         keyboard_button = Telegram::Bot::Types::KeyboardButton.new(text: 'Открыть загрузчик', web_app: web_app_info)
         keyboard = Telegram::Bot::Types::ReplyKeyboardMarkup.new(keyboard: [[keyboard_button]], resize_keyboard: true)
 
-        bot.api.send_message(chat_id: chat_id, text: "Нажмите кнопку, чтобы открыть загрузчик видео в Web App, или просто пришлите ссылку:", reply_markup: keyboard)
+        bot.api.send_message(chat_id: chat_id, text: "Вставьте ссылку youtube видео сюда...", reply_markup: keyboard)
       else
         puts "📨 Получено сообщение от #{message.from.first_name}: #{text}"
         # На случай если пользователь напрямую прислал ссылку — можно подсказать открыть Web App
