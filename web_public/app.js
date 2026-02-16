@@ -7,6 +7,68 @@ async function postProcess(url){
   return res.json()
 }
 
+// Если WebApp доступен — сообщаем Telegram, что страница готова.
+let _readyCalled = false
+function callTelegramReady(){
+  try{
+    if(window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.ready === 'function'){
+      Telegram.WebApp.ready()
+      if(typeof Telegram.WebApp.expand === 'function'){
+        try{ Telegram.WebApp.expand() }catch(e){}
+      }
+      _readyCalled = true
+        return true
+      return true
+    }
+  }catch(e){
+    // игнорируем
+  }
+  return false
+}
+
+// Пытаемся несколько раз — иногда Telegram объект появляется позже в WebView.
+callTelegramReady()
+const __tgInterval = setInterval(()=>{
+  if(callTelegramReady()) clearInterval(__tgInterval)
+}, 150)
+  setTimeout(()=>{ clearInterval(__tgInterval); }, 4000)
+
+// Отметим, что клиентский скрипт запустился
+document.addEventListener('DOMContentLoaded', ()=>{
+  document.addEventListener('DOMContentLoaded', ()=>{})
+})
+
+// Отправляем пинг на сервер, чтобы зафиксировать, что JS выполнился внутри WebView
+;(async ()=>{
+  try{
+     await fetch('/__ping', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ts:Date.now(), ua: navigator.userAgent})})
+  }catch(e){
+     // ignore ping errors
+  }
+})()
+
+window.addEventListener('error', function(ev){
+  try{ fetch('/__error', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: ev.message, filename: ev.filename, lineno: ev.lineno, stack: (ev.error && ev.error.stack)||null, ts: Date.now()})}) }catch(e){}
+})
+
+window.addEventListener('unhandledrejection', function(ev){
+  try{ fetch('/__error', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: 'unhandledrejection', reason: String(ev.reason), ts: Date.now()})}) }catch(e){}
+})
+
+document.getElementById('paste').addEventListener('click', async ()=>{
+  const status = document.getElementById('status')
+  status.textContent = 'Чтение буфера...' 
+  try{
+    const text = await navigator.clipboard.readText()
+    document.getElementById('url').value = text
+    status.textContent = 'Вставлено из буфера.'
+  }catch(e){
+    const text = prompt('Вставьте ссылку из буфера сюда:')
+    if(text) document.getElementById('url').value = text
+    status.textContent = ''
+  }
+})
+
 document.getElementById('process').addEventListener('click', async ()=>{
   const url = document.getElementById('url').value.trim()
   const status = document.getElementById('status')

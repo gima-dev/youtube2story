@@ -24,8 +24,39 @@ server_opts = { Port: PORT }
 # TLS теперь терминруется на nginx. Запускаем простой HTTP backend.
 server = WEBrick::HTTPServer.new(server_opts)
 
-# Статика из папки web_public
-server.mount "/", WEBrick::HTTPServlet::FileHandler, File.join(Dir.pwd, 'web_public')
+# Статика: логируем заголовки для '/' и '/app.js' чтобы понять, что отправляет Telegram WebView
+server.mount_proc '/' do |req, res|
+  begin
+    server.logger.info "REQ / from #{req.remote_ip} headers=#{req.header.inspect}"
+    path = File.join(Dir.pwd, 'web_public', 'index.html')
+    body = File.read(path)
+    res.status = 200
+    res['Content-Type'] = 'text/html'
+    res.body = body
+  rescue => e
+    server.logger.error "ERR_SERVE_INDEX #{e.message}"
+    res.status = 500
+    res.body = 'error'
+  end
+end
+
+server.mount_proc '/app.js' do |req, res|
+  begin
+    server.logger.info "REQ /app.js from #{req.remote_ip} headers=#{req.header.inspect}"
+    path = File.join(Dir.pwd, 'web_public', 'app.js')
+    body = File.read(path)
+    res.status = 200
+    res['Content-Type'] = 'application/javascript'
+    res.body = body
+  rescue => e
+    server.logger.error "ERR_SERVE_APPJS #{e.message}"
+    res.status = 500
+    res.body = ''
+  end
+end
+
+# Serve other static assets (outputs etc.) via file handler
+server.mount '/outputs', WEBrick::HTTPServlet::FileHandler, File.join(Dir.pwd, 'web_public', 'outputs')
 
 def command_exists?(name)
   system("which #{name} > /dev/null 2>&1")
@@ -71,6 +102,36 @@ server.mount_proc "/process" do |req, res|
     res.status = 500
     res['Content-Type'] = 'application/json'
     res.body =({ error: e.message, backtrace: e.backtrace[0..5] }.to_json)
+  end
+end
+
+server.mount_proc "/__ping" do |req, res|
+  begin
+    body = req.body || ''
+    server.logger.info "CLIENT_PING #{req.remote_ip} #{Time.now} #{body}"
+    res.status = 200
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: true }.to_json)
+  rescue => e
+    server.logger.error "PING_ERR #{e.message}"
+    res.status = 500
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: false }.to_json)
+  end
+end
+
+server.mount_proc "/__error" do |req, res|
+  begin
+    body = req.body || ''
+    server.logger.error "CLIENT_ERROR #{req.remote_ip} #{Time.now} #{body}"
+    res.status = 200
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: true }.to_json)
+  rescue => e
+    server.logger.error "ERROR_LOG_ERR #{e.message}"
+    res.status = 500
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: false }.to_json)
   end
 end
 

@@ -15,8 +15,9 @@
   <h1>Загрузчик YouTube → Story</h1>
   <p class="hint">Вставьте ссылку на видео YouTube. Сервер скачает и обрежет до 60s (если настроено), затем вернёт файл для публикации в историях.</p>
 
-  <input id="url" placeholder="https://youtu.be/..." />
-  <div>
+  <input id="url" placeholder="https://youtu.be/..." autofocus />
+  <div style="display:flex;gap:8px;align-items:center">
+    <button id="paste">Вставить из буфера</button>
     <button id="process">Обработать и открыть редактор историй</button>
   </div>
 
