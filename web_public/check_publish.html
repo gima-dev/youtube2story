@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Check Publish</title>
+</head>
+<body>
+  <p>Проверка прав публикации...</p>
+  <script>
+    (function(){
+      function qs(key){
+        const params = new URLSearchParams(window.location.search);
+        return params.get(key);
+      }
+      const sourceUrl = qs('url') || null;
+      try{
+        const hasShare = !!(window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.shareToStory === 'function');
+        const canShare = hasShare; // simple check; could also inspect initDataUnsafe
+        const payload = { can_share: !!canShare, url: sourceUrl };
+        if(window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.sendData === 'function'){
+          Telegram.WebApp.sendData(JSON.stringify(payload));
+        } else {
+          document.body.innerHTML = '<p>Невозможно проверить в этом клиенте.</p>';
+        }
+      }catch(e){
+        document.body.innerHTML = '<p>Ошибка: '+e.message+'</p>';
+      }
+    })();
+  </script>
+</body>
+</html>

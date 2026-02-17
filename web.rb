@@ -40,6 +40,21 @@ server.mount_proc '/' do |req, res|
   end
 end
 
+# Serve check_publish page for WebApp to verify shareToStory availability
+server.mount_proc '/check_publish' do |req, res|
+  begin
+    path = File.join(Dir.pwd, 'web_public', 'check_publish.html')
+    body = File.read(path)
+    res.status = 200
+    res['Content-Type'] = 'text/html'
+    res.body = body
+  rescue => e
+    server.logger.error "ERR_SERVE_CHECK #{e.message}"
+    res.status = 500
+    res.body = 'error'
+  end
+end
+
 server.mount_proc '/app.js' do |req, res|
   begin
     server.logger.info "REQ /app.js from #{req.remote_ip} headers=#{req.header.inspect}"
