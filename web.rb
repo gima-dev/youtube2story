@@ -150,7 +150,10 @@ server.mount_proc '/publish' do |req, res|
         <h3>Publish Story</h3>
         <div id="status">Loading...</div>
         <div id="preview"></div>
-        <button id="publishBtn" style="display:none">Опубликовать историю</button>
+        <div id="note" style="color:#666;margin-top:12px"></div>
+        <a id="downloadLink" href="#" style="display:none;margin-top:8px;display:inline-block">Скачать видео</a>
+        <button id="copyLink" style="display:none;margin-left:8px">Скопировать ссылку</button>
+        <button id="publishBtn" style="display:none;margin-left:8px">Опубликовать историю</button>
         <script>
           const jobId = "#{job_id}";
           const statusEl = document.getElementById('status');
@@ -177,7 +180,15 @@ server.mount_proc '/publish' do |req, res|
                 }
                 // Попробуем авто-вызвать несколько раз с интервалом — иногда WebApp API появляется чуть позже
                 if (!tryAutoPublish()){
-                  let tries=0; const tInt = setInterval(()=>{ tries++; if(tryAutoPublish()||tries>5) clearInterval(tInt); }, 500);
+                  let tries=0; const tInt = setInterval(()=>{ tries++; if(tryAutoPublish()||tries>5) { if(tries>5){
+                      // После нескольких неудачных попыток покажем пользователю понятную подсказку и ссылки
+                      const note = document.getElementById('note');
+                      note.innerText = 'Похоже, ваш аккаунт не поддерживает публикацию историй напрямую из WebApp (возможно нет доступа). Вы можете скачать видео и опубликовать вручную.';
+                      const downloadLink = document.getElementById('downloadLink');
+                      downloadLink.href = src; downloadLink.style.display='inline-block';
+                      const copyBtn = document.getElementById('copyLink'); copyBtn.style.display='inline-block';
+                      copyBtn.addEventListener('click', ()=>{ navigator.clipboard.writeText(src).then(()=>{ alert('Ссылка скопирована'); }).catch(()=>{ alert('Не удалось скопировать ссылку'); }); });
+                    } clearInterval(tInt); } }, 500);
                 }
               } else {
                 statusEl.innerText = 'Обработка...';
