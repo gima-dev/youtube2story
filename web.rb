@@ -164,6 +164,21 @@ server.mount_proc '/publish' do |req, res|
                 const src = '#{HOST}' + '/' + j.output;
                 previewEl.innerHTML = '<video controls playsinline src="'+src+'"></video>';
                 publishBtn.style.display = 'inline-block';
+                // Авто-вызов публикации в Telegram WebApp, если доступен
+                function tryAutoPublish(){
+                  try{
+                    if (window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.shareToStory === 'function'){
+                      Telegram.WebApp.shareToStory({ url: src });
+                      statusEl.innerText = 'Открыт редактор историй.';
+                      return true;
+                    }
+                  }catch(e){ console.error('autoPublish err', e) }
+                  return false;
+                }
+                // Попробуем авто-вызвать несколько раз с интервалом — иногда WebApp API появляется чуть позже
+                if (!tryAutoPublish()){
+                  let tries=0; const tInt = setInterval(()=>{ tries++; if(tryAutoPublish()||tries>5) clearInterval(tInt); }, 500);
+                }
               } else {
                 statusEl.innerText = 'Обработка...';
                 setTimeout(check, 2000);
