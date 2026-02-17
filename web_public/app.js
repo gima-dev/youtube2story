@@ -77,20 +77,42 @@ document.getElementById('process').addEventListener('click', async ()=>{
   try{
     const data = await postProcess(url)
     if(data.error){ status.textContent = 'Ошибка: ' + data.error; return }
-    const processed = data.processed_url
-    status.innerHTML = 'Готово. Попробовать опубликовать: <a href="'+processed+'">файл</a>'
-
-    // Если WebApp API доступен — используем shareToStory
-    if(window.Telegram && Telegram.WebApp && Telegram.WebApp.shareToStory){
-      try{
-        await Telegram.WebApp.shareToStory({url: processed})
-        status.textContent = 'Открылся редактор историй.'
-      }catch(e){
-        status.textContent = 'Не удалось вызвать shareToStory: ' + e.message
+    // если сервер вернул прямой processed_url — используем его сразу
+    if(data.processed_url){
+      const processed = data.processed_url
+      status.innerHTML = 'Готово. Попробовать опубликовать: <a href="'+processed+'">файл</a>'
+      if(window.Telegram && Telegram.WebApp && Telegram.WebApp.shareToStory){
+        try{
+          await Telegram.WebApp.shareToStory({url: processed})
+          status.textContent = 'Открылся редактор историй.'
+        }catch(e){
+          status.textContent = 'Не удалось вызвать shareToStory: ' + e.message
+        }
+      } else {
+        status.textContent += ' — откройте эту страницу в Telegram и нажмите кнопку снова.'
       }
-    } else {
-      status.textContent += ' — откройте эту страницу в Telegram и нажмите кнопку снова.'
+      return
     }
+
+    // иначе ожидаем job_id и показываем UX кнопку для открытия редактора
+    const jobId = data.job_id || data.id || null
+    if(jobId){
+      const publishUrl = '/publish?job_id=' + encodeURIComponent(jobId)
+      status.innerHTML = 'Задача поставлена в очередь. <button id="openPub">Открыть редактор историй</button>'
+      document.getElementById('openPub').addEventListener('click', ()=>{
+        // открываем страницу редактора в текущем окне
+        window.location.href = publishUrl
+      })
+      // если мы внутри Telegram, попробуем открыть страницу в WebView (замена действия)
+      try{
+        if(window.Telegram && Telegram.WebApp){
+          // просто навигация должна работать в WebView
+        }
+      }catch(e){}
+      return
+    }
+
+    status.textContent = 'Сервер вернул неожиданный ответ.'
   }catch(e){
     status.textContent = 'Ошибка запроса: ' + e.message
   }
