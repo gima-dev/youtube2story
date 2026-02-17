@@ -46,7 +46,10 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
               # fallback: open generic publish page
               "#{WEBAPP_URL}/publish"
             end
-            kb = { inline_keyboard: [[{ text: 'Опубликовать историю', web_app: { url: publish_url } }]] }
+            kb = { inline_keyboard: [[
+              { text: 'Опубликовать (WebApp)', web_app: { url: publish_url } },
+              { text: 'Открыть в браузере', url: publish_url }
+            ]] }
             bot.api.send_message(chat_id: chat_id, text: "Готово — нажмите кнопку для публикации:", reply_markup: kb)
           else
             bot.api.send_message(chat_id: chat_id, text: "Не удалось отправить ссылку на обработку (#{res.code}). Попробуйте позже.")
