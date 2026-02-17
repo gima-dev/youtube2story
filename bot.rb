@@ -12,6 +12,15 @@ $stderr.sync = true
 TOKEN = ENV['TELEGRAM_BOT_TOKEN']
 WEBAPP_URL = ENV['WEBAPP_URL'] || 'https://gima.dedyn.io/app'
 
+# Normalise WEBAPP base origin (strip any path like /app so we can reliably call /process and /publish)
+require 'uri' unless defined?(URI)
+begin
+  _u = URI.parse(WEBAPP_URL)
+  WEBAPP_ORIGIN = _u.scheme + '://' + _u.host + (_u.port && _u.port != _u.default_port ? ":#{_u.port}" : '')
+rescue => _e
+  WEBAPP_ORIGIN = WEBAPP_URL
+end
+
 puts "🤖 Бот запущен с polling..."
 puts "📅 Время запуска: #{Time.now}"
 
@@ -31,7 +40,7 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
         puts "📨 Получена YouTube ссылка от #{message.from.first_name}: #{text}"
         bot.api.send_message(chat_id: chat_id, text: "Получил ссылку, запускаю обработку... Это может занять некоторое время.")
         begin
-          uri = URI.parse(WEBAPP_URL + '/process')
+          uri = URI.parse(WEBAPP_ORIGIN + '/process')
           req = Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json')
           req.body = { url: text }.to_json
           res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
@@ -41,10 +50,9 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
             body = JSON.parse(res.body) rescue {}
             job_id = body['job_id'] || body['id'] || nil
             publish_url = if job_id
-              "#{WEBAPP_URL}/publish?job_id=#{URI.encode_www_form_component(job_id)}"
+              "#{WEBAPP_ORIGIN}/publish?job_id=#{URI.encode_www_form_component(job_id)}"
             else
-              # fallback: open generic publish page
-              "#{WEBAPP_URL}/publish"
+              "#{WEBAPP_ORIGIN}/publish"
             end
             kb = {
               inline_keyboard: [[
