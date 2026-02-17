@@ -105,6 +105,98 @@ server.mount_proc "/process" do |req, res|
   end
 end
 
+server.mount_proc "/job_status" do |req, res|
+  begin
+    job_id = req.query['job_id']
+    if job_id.nil? || job_id.empty?
+      res.status = 400
+      res['Content-Type'] = 'application/json'
+      res.body =({ error: 'missing job_id' }.to_json)
+      next
+    end
+
+    mapping_path = File.join(OUTPUT_DIR, "#{job_id}.json")
+    if File.exist?(mapping_path)
+      data = JSON.parse(File.read(mapping_path)) rescue {}
+      res.status = 200
+      res['Content-Type'] = 'application/json'
+      res.body =({ status: 'done', output: data['output'] }.to_json)
+    else
+      res.status = 200
+      res['Content-Type'] = 'application/json'
+      res.body =({ status: 'processing' }.to_json)
+    end
+  rescue => e
+    res.status = 500
+    res['Content-Type'] = 'application/json'
+    res.body =({ error: e.message }.to_json)
+  end
+end
+
+server.mount_proc '/publish' do |req, res|
+  begin
+    job_id = req.query['job_id']
+    # simple HTML page that shows processed video if ready
+    html = <<~HTML
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Publish Story</title>
+        <style>body{font-family:Helvetica,Arial,sans-serif;padding:16px}video{max-width:100%;height:auto}</style>
+      </head>
+      <body>
+        <h3>Publish Story</h3>
+        <div id="status">Loading...</div>
+        <div id="preview"></div>
+        <button id="publishBtn" style="display:none">Опубликовать историю</button>
+        <script>
+          const jobId = "#{job_id}";
+          const statusEl = document.getElementById('status');
+          const previewEl = document.getElementById('preview');
+          const publishBtn = document.getElementById('publishBtn');
+
+          function check() {
+            fetch('/job_status?job_id=' + encodeURIComponent(jobId)).then(r=>r.json()).then(j=>{
+              if (j.status === 'done') {
+                statusEl.innerText = 'Готово';
+                const src = '#{HOST}' + '/' + j.output;
+                previewEl.innerHTML = '<video controls playsinline src="'+src+'"></video>';
+                publishBtn.style.display = 'inline-block';
+              } else {
+                statusEl.innerText = 'Обработка...';
+                setTimeout(check, 2000);
+              }
+            }).catch(e=>{statusEl.innerText='Ошибка'; console.error(e)});
+          }
+          publishBtn.addEventListener('click', ()=>{
+            try {
+              if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.shareToStory) {
+                const el = document.querySelector('video');
+                const videoUrl = el ? el.src : null;
+                window.Telegram.WebApp.shareToStory({ url: videoUrl });
+              } else {
+                alert('Publishing via Telegram WebApp is available only inside Telegram.');
+              }
+            } catch(e){ console.error(e); alert('Ошибка публикации: '+e.message) }
+          });
+          if (jobId) check(); else statusEl.innerText='No job_id provided';
+        </script>
+      </body>
+      </html>
+    HTML
+
+    res.status = 200
+    res['Content-Type'] = 'text/html'
+    res.body = html
+  rescue => e
+    server.logger.error "PUBLISH_ERR #{e.message}"
+    res.status = 500
+    res.body = 'error'
+  end
+end
+
 server.mount_proc "/__ping" do |req, res|
   begin
     body = req.body || ''

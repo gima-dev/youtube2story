@@ -1,5 +1,6 @@
 require 'sidekiq'
 require 'open3'
+require 'json'
 require 'securerandom'
 require 'fileutils'
 require 'tmpdir'
@@ -59,7 +60,18 @@ class ProcessWorker
         raise "ffmpeg failed: #{fferr} (exit=#{ffstatus.exitstatus})"
       end
 
-      "outputs/#{final_name}"
+      output_rel = "outputs/#{final_name}"
+      # write mapping for this job id so web can lookup by job_id
+      begin
+        if respond_to?(:jid) && jid
+          mapping = { output: output_rel }
+          File.write(File.join(OUTPUT_DIR, "#{jid}.json"), mapping.to_json)
+        end
+      rescue => e
+        Sidekiq.logger.error("ProcessWorker: failed to write mapping for jid=#{jid}: #{e}")
+      end
+
+      output_rel
     ensure
       FileUtils.remove_entry(tmpdir) if tmpdir && Dir.exist?(tmpdir)
     end
