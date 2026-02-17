@@ -22,16 +22,8 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
       case text
       when '/start'
         puts "📨 Получено сообщение от #{message.from.first_name}: /start"
-        # Отправим кнопку, открывающую Web App с временным параметром, чтобы избежать кэширования
-        sep = WEBAPP_URL.include?('?') ? '&' : '?'
-        ts = (Time.now.to_f * 1000).to_i
-        url = "#{WEBAPP_URL}#{sep}t=#{ts}"
-        web_app_info = Telegram::Bot::Types::WebAppInfo.new(url: url)
-        puts "🔗 Отправляем WebApp URL: #{url}"
-        keyboard_button = Telegram::Bot::Types::KeyboardButton.new(text: 'Открыть загрузчик', web_app: web_app_info)
-        keyboard = Telegram::Bot::Types::ReplyKeyboardMarkup.new(keyboard: [[keyboard_button]], resize_keyboard: true)
-
-        bot.api.send_message(chat_id: chat_id, text: "Вставьте ссылку youtube видео сюда...", reply_markup: keyboard)
+        # Попросим пользователя вставить ссылку — без открытия WebApp в отдельной вкладке
+        bot.api.send_message(chat_id: chat_id, text: "Вставьте ссылку youtube видео сюда...")
       else
         puts "📨 Получено сообщение от #{message.from.first_name}: #{text}"
         # На случай если пользователь напрямую прислал ссылку — можно подсказать открыть Web App
