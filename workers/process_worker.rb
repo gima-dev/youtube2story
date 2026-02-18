@@ -104,15 +104,9 @@ class ProcessWorker
 
   def write_progress(percent, stage)
     return unless respond_to?(:jid) && jid
-    payload = {
-      percent: percent,
-      stage: stage,
-      updated_at: Time.now.utc.iso8601
-    }
-    File.write(File.join(OUTPUT_DIR, "#{jid}.progress.json"), payload.to_json)
     update_job_progress(percent, stage)
   rescue => e
-    Sidekiq.logger.error("ProcessWorker: failed to write progress for jid=#{jid}: #{e}")
+    Sidekiq.logger.error("ProcessWorker: failed to update progress for jid=#{jid}: #{e}")
   end
 
   def self.command_exists?(name)
@@ -194,16 +188,6 @@ class ProcessWorker
       write_progress(90, 'finalizing')
 
       output_rel = "outputs/#{final_name}"
-      # write mapping for this job id so web can lookup by job_id
-      begin
-        if respond_to?(:jid) && jid
-          mapping = { output: output_rel, video_id: video_id }
-          File.write(File.join(OUTPUT_DIR, "#{jid}.json"), mapping.to_json)
-        end
-      rescue => e
-        Sidekiq.logger.error("ProcessWorker: failed to write mapping for jid=#{jid}: #{e}")
-      end
-
       write_progress(100, 'done')
       mark_job_done(output_rel, video_id)
 

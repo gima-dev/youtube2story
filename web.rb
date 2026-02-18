@@ -493,22 +493,10 @@ server.mount_proc "/job_status" do |req, res|
       end
     end
 
-    mapping_path = File.join(OUTPUT_DIR, "#{job_id}.json")
-    progress_path = File.join(OUTPUT_DIR, "#{job_id}.progress.json")
-    progress_data = File.exist?(progress_path) ? (JSON.parse(File.read(progress_path)) rescue {}) : {}
-    progress_percent = progress_data['percent']
-    progress_stage = progress_data['stage']
-
-    if File.exist?(mapping_path)
-      data = JSON.parse(File.read(mapping_path)) rescue {}
-      res.status = 200
-      res['Content-Type'] = 'application/json'
-      res.body =({ status: 'done', output: data['output'], video_id: data['video_id'], progress: 100, stage: 'done' }.to_json)
-    else
-      res.status = 200
-      res['Content-Type'] = 'application/json'
-      res.body =({ status: 'processing', progress: progress_percent, stage: progress_stage }.to_json)
-    end
+    # If not found in DB, return processing state
+    res.status = 200
+    res['Content-Type'] = 'application/json'
+    res.body =({ status: 'processing', progress: nil, stage: nil }.to_json)
   rescue => e
     res.status = 500
     res['Content-Type'] = 'application/json'
@@ -997,19 +985,6 @@ server.mount_proc "/admin/reset_user" do |req, res|
             rescue => e
               server.logger.error("Failed to delete artifact file #{full_path}: #{e.message}")
             end
-          end
-        end
-
-        # Delete .json and .progress.json files for this user's jobs
-        Dir.glob(File.join(OUTPUT_DIR, '*.json')).each do |json_file|
-          begin
-            mapping = JSON.parse(File.read(json_file)) rescue {}
-            if mapping['user_id'] && mapping['user_id'].to_i == user_id
-              File.delete(json_file)
-              server.logger.info("Deleted mapping file: #{json_file}")
-            end
-          rescue => e
-            server.logger.error("Error processing mapping file #{json_file}: #{e.message}")
           end
         end
 
