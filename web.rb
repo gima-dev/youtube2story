@@ -932,6 +932,102 @@ server.mount_proc "/__ping" do |req, res|
   end
 end
 
+server.mount_proc "/admin/reset_user" do |req, res|
+  begin
+    body_str = req.body.to_s
+    data = JSON.parse(body_str) if body_str.length > 0
+    tg_user_id = data && data['tg_user_id'] ? normalize_tg_user_id(data['tg_user_id']) : nil
+
+    if tg_user_id.nil?
+      res.status = 400
+      res['Content-Type'] = 'application/json'
+      res.body =({ ok: false, error: 'missing tg_user_id' }.to_json)
+      next
+    end
+
+    if db_available?
+      with_db do |conn|
+        # Fetch user ID
+        user_row = conn.exec_params(
+          'SELECT id FROM users WHERE telegram_user_id = $1 LIMIT 1',
+          [tg_user_id]
+        ).first
+
+        unless user_row
+          res.status = 404
+          res['Content-Type'] = 'application/json'
+          res.body =({ ok: false, error: 'user not found' }.to_json)
+          next
+        end
+
+        user_id = user_row['id'].to_i
+
+        # Get all artifact paths for this user to delete files
+        artifact_rows = conn.exec_params(
+          'SELECT path FROM artifacts WHERE job_id IN (SELECT id FROM jobs WHERE user_id = $1)',
+          [user_id]
+        )
+
+        # Delete all events for this user
+        conn.exec_params('DELETE FROM events WHERE user_id = $1', [user_id])
+
+        # Delete all artifacts for this user's jobs
+        conn.exec_params('DELETE FROM artifacts WHERE job_id IN (SELECT id FROM jobs WHERE user_id = $1)', [user_id])
+
+        # Delete all quotas for this user
+        conn.exec_params('DELETE FROM quotas WHERE user_id = $1', [user_id])
+
+        # Delete all jobs for this user
+        conn.exec_params('DELETE FROM jobs WHERE user_id = $1', [user_id])
+
+        # Update user but keep the record
+        conn.exec_params(
+          'UPDATE users SET has_story_access = NULL, story_access_checked_at = NULL, last_webapp_seen_at = NULL, updated_at = NOW() WHERE id = $1',
+          [user_id]
+        )
+
+        # Delete artifact files from disk
+        artifact_rows.each do |row|
+          file_path = row['path']
+          full_path = File.join(OUTPUT_DIR, file_path) if file_path
+          if full_path && File.exist?(full_path)
+            begin
+              File.delete(full_path)
+              server.logger.info("Deleted artifact file: #{full_path}")
+            rescue => e
+              server.logger.error("Failed to delete artifact file #{full_path}: #{e.message}")
+            end
+          end
+        end
+
+        # Delete .json and .progress.json files for this user's jobs
+        Dir.glob(File.join(OUTPUT_DIR, '*.json')).each do |json_file|
+          begin
+            mapping = JSON.parse(File.read(json_file)) rescue {}
+            if mapping['user_id'] && mapping['user_id'].to_i == user_id
+              File.delete(json_file)
+              server.logger.info("Deleted mapping file: #{json_file}")
+            end
+          rescue => e
+            server.logger.error("Error processing mapping file #{json_file}: #{e.message}")
+          end
+        end
+
+        server.logger.info("Reset user data: tg_user_id=#{tg_user_id}, user_id=#{user_id}")
+      end
+    end
+
+    res.status = 200
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: true }.to_json)
+  rescue => e
+    server.logger.error "ADMIN_RESET_ERR #{e.class}: #{e.message}"
+    res.status = 500
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: false, error: e.message }.to_json)
+  end
+end
+
 server.mount_proc "/__error" do |req, res|
   begin
     body = req.body || ''

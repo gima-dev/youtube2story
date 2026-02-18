@@ -73,13 +73,38 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
         $stderr.sync = true
         bot.api.send_message(chat_id: chat_id, text: "Вставьте ссылку YouTube сюда или откройте редактор через кнопку.")
 
+      when '/reset'
+        # Developer command - reset all user data
+        tg_user_id = message.from && message.from.id
+        begin
+          uri = URI.parse(WEBAPP_ORIGIN + '/admin/reset_user')
+          req = Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json')
+          req.body = { tg_user_id: tg_user_id }.to_json
+          res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
+            http.request(req)
+          end
+          if res.is_a?(Net::HTTPSuccess)
+            body = JSON.parse(res.body) rescue {}
+            if body['ok']
+              bot.api.send_message(chat_id: chat_id, text: "✅ Все данные пользователя удалены, БД очищена, файлы удалены. Пользователь остался в таблице users.")
+            else
+              bot.api.send_message(chat_id: chat_id, text: "❌ Ошибка: #{body['error']}")
+            end
+          else
+            bot.api.send_message(chat_id: chat_id, text: "❌ Ошибка сервера при сбросе данных (#{res.code})")
+          end
+        rescue => e
+          puts "Ошибка при сбросе данных: #{e.class}: #{e}"
+          bot.api.send_message(chat_id: chat_id, text: "❌ Ошибка при сбросе: #{e.message}")
+        end
+
       when /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i
         puts "📨 Получена YouTube ссылка от #{message.from && message.from.first_name}: #{text}"
-        # Send WebApp button to check publish capability first
+        # Send WebApp button to resume existing state first (or fallback to check)
         tg_user_id = message.from && message.from.id
-        check_url = "#{WEBAPP_ORIGIN}/check_publish?url=#{URI.encode_www_form_component(text)}"
-        check_url += "&tg_user_id=#{URI.encode_www_form_component(tg_user_id.to_s)}" if tg_user_id
-        kb = { inline_keyboard: [[{ text: 'Опубликовать', web_app: { url: check_url } }]] }
+        open_url = "#{WEBAPP_ORIGIN}/resume?url=#{URI.encode_www_form_component(text)}"
+        open_url += "&tg_user_id=#{URI.encode_www_form_component(tg_user_id.to_s)}" if tg_user_id
+        kb = { inline_keyboard: [[{ text: 'Опубликовать', web_app: { url: open_url } }]] }
         bot.api.send_message(chat_id: chat_id, text: 'Опубликовать', reply_markup: kb.to_json)
 
       else
