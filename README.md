@@ -61,6 +61,11 @@ curl -sS http://127.0.0.1:8080/db_health
 
 Ожидаемый ответ: JSON с `ok: true`, именем БД и пользователем.
 
+6) Применение минимальной схемы БД (users/jobs/artifacts/quotas/events):
+```bash
+psql -d youtube2story -f db/schema.sql
+```
+
 Дальнейшие шаги:
 - реализовать реальную обработку в `/process` (yt-dlp + ffmpeg), сохранять результат в публичную директорию `web_public/outputs/` или S3 и возвращать URL
 - оптимизировать кодеки/параметры для сторис (720x1280 H.265, <=60s)
