@@ -12,6 +12,18 @@ raise 'Missing TELEGRAM token' unless TOKEN
 
 Telegram::Bot::Client.run(TOKEN) do |bot|
   puts "bot started"
+  
+  # Register bot commands
+  begin
+    bot.api.set_my_commands(commands: [
+      { command: 'start', description: 'Начать работу' },
+      { command: 'reset', description: 'Очистить мои данные (разработчик)' }
+    ])
+    puts "Bot commands registered"
+  rescue => e
+    puts "Failed to register commands: #{e.message}"
+  end
+  
   bot.listen do |message|
     begin
       chat_id = message.chat.id
