@@ -819,6 +819,7 @@ server.mount_proc '/publish' do |req, res|
           const progressText = document.getElementById('progressText');
           let progressPct = 0;
           let startedAt = Date.now();
+          let videoUrl = null;
 
           if (jobId) {
             jobIdEl.innerText = 'Job ID: ' + jobId;
@@ -857,7 +858,9 @@ server.mount_proc '/publish' do |req, res|
                 statusEl.innerText = 'Готово';
                 updateProgress(true, 100, 'done');
                 const src = '#{HOST}' + '/' + j.output;
-                previewEl.innerHTML = '<video controls playsinline src="'+src+'"></video>';
+                videoUrl = src;
+                const posterSrc = src.replace(/\.[^.]+$/, '.jpg');
+                previewEl.innerHTML = '<img src="'+posterSrc+'" alt="preview" style="width:100%;border-radius:18px;background:#0c0c0c">';
                 publishBtn.style.display = 'inline-block';
                 function tryAutoPublish(){
                   try{
@@ -892,8 +895,6 @@ server.mount_proc '/publish' do |req, res|
           publishBtn.addEventListener('click', ()=>{
             try {
               if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.shareToStory) {
-                const el = document.querySelector('video');
-                const videoUrl = el ? el.src : null;
                 if (videoUrl) {
                   window.Telegram.WebApp.shareToStory(videoUrl);
                 }
