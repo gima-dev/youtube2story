@@ -16,7 +16,8 @@ HOST = ENV['WEBAPP_HOST'] || 'https://youtube.gimadev.win'
 # По умолчанию backend слушает локально на порту 8080 (nginx терминирует TLS)
 PORT = ENV['PORT'] ? ENV['PORT'].to_i : 8080
 
-OUTPUT_DIR = File.join(Dir.pwd, 'web_public', 'outputs')
+APP_ROOT = File.expand_path(__dir__)
+OUTPUT_DIR = File.join(APP_ROOT, 'web_public', 'outputs')
 FileUtils.mkdir_p(OUTPUT_DIR)
 
 server_opts = { Port: PORT }
@@ -156,15 +157,20 @@ server.mount_proc "/job_status" do |req, res|
     end
 
     mapping_path = File.join(OUTPUT_DIR, "#{job_id}.json")
+    progress_path = File.join(OUTPUT_DIR, "#{job_id}.progress.json")
+    progress_data = File.exist?(progress_path) ? (JSON.parse(File.read(progress_path)) rescue {}) : {}
+    progress_percent = progress_data['percent']
+    progress_stage = progress_data['stage']
+
     if File.exist?(mapping_path)
       data = JSON.parse(File.read(mapping_path)) rescue {}
       res.status = 200
       res['Content-Type'] = 'application/json'
-      res.body =({ status: 'done', output: data['output'] }.to_json)
+      res.body =({ status: 'done', output: data['output'], progress: 100, stage: 'done' }.to_json)
     else
       res.status = 200
       res['Content-Type'] = 'application/json'
-      res.body =({ status: 'processing' }.to_json)
+      res.body =({ status: 'processing', progress: progress_percent, stage: progress_stage }.to_json)
     end
   rescue => e
     res.status = 500
@@ -185,10 +191,18 @@ server.mount_proc '/publish' do |req, res|
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>Publish Story</title>
         <style>body{font-family:Helvetica,Arial,sans-serif;padding:16px}video{max-width:100%;height:auto}</style>
+        <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
       </head>
       <body>
         <h3>Publish Story</h3>
         <div id="status">Loading...</div>
+        <div id="jobId" style="margin-top:6px;color:#666;font-size:0.9em"></div>
+        <div id="progressWrap" style="margin-top:12px;display:none">
+          <div style="height:8px;background:#eee;border-radius:999px;overflow:hidden">
+            <div id="progressBar" style="height:8px;width:0%;background:#3b82f6"></div>
+          </div>
+          <div id="progressText" style="margin-top:6px;color:#666;font-size:0.9em"></div>
+        </div>
         <div id="preview"></div>
         <div id="note" style="color:#666;margin-top:12px"></div>
         <a id="downloadLink" href="#" style="display:none;margin-top:8px;display:inline-block">Скачать видео</a>
@@ -198,12 +212,50 @@ server.mount_proc '/publish' do |req, res|
           const jobId = "#{job_id}";
           const statusEl = document.getElementById('status');
           const previewEl = document.getElementById('preview');
+          const jobIdEl = document.getElementById('jobId');
           const publishBtn = document.getElementById('publishBtn');
+          const progressWrap = document.getElementById('progressWrap');
+          const progressBar = document.getElementById('progressBar');
+          const progressText = document.getElementById('progressText');
+          let progressPct = 0;
+          let startedAt = Date.now();
+
+          if (jobId) {
+            jobIdEl.innerText = 'Job ID: ' + jobId;
+          }
+
+          try {
+            if (window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.ready === 'function') {
+              Telegram.WebApp.ready();
+              if (typeof Telegram.WebApp.expand === 'function') {
+                Telegram.WebApp.expand();
+              }
+            }
+          } catch (e) {}
+
+          function showProgress(){
+            progressWrap.style.display = 'block';
+          }
+
+          function updateProgress(done, pct, stage){
+            if(done){
+              progressPct = 100;
+            } else if (typeof pct === 'number' && !isNaN(pct)) {
+              progressPct = Math.max(progressPct, Math.min(Math.floor(pct), 99));
+            } else {
+              progressPct = Math.min(progressPct + 7, 90);
+            }
+            progressBar.style.width = progressPct + '%';
+            const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+            const stageLabel = stage ? (' ' + stage) : '';
+            progressText.innerText = done ? 'Готово' : ('Обработка... ' + progressPct + '% (' + elapsed + 's)' + stageLabel);
+          }
 
           function check() {
             fetch('/job_status?job_id=' + encodeURIComponent(jobId)).then(r=>r.json()).then(j=>{
               if (j.status === 'done') {
                 statusEl.innerText = 'Готово';
+                updateProgress(true, 100, 'done');
                 const src = '#{HOST}' + '/' + j.output;
                 previewEl.innerHTML = '<video controls playsinline src="'+src+'"></video>';
                 publishBtn.style.display = 'inline-block';
@@ -211,7 +263,7 @@ server.mount_proc '/publish' do |req, res|
                 function tryAutoPublish(){
                   try{
                     if (window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.shareToStory === 'function'){
-                      Telegram.WebApp.shareToStory({ url: src });
+                      Telegram.WebApp.shareToStory(src);
                       statusEl.innerText = 'Открыт редактор историй.';
                       return true;
                     }
@@ -232,6 +284,8 @@ server.mount_proc '/publish' do |req, res|
                 }
               } else {
                 statusEl.innerText = 'Обработка...';
+                showProgress();
+                updateProgress(false, j.progress, j.stage);
                 setTimeout(check, 2000);
               }
             }).catch(e=>{statusEl.innerText='Ошибка'; console.error(e)});
@@ -241,7 +295,9 @@ server.mount_proc '/publish' do |req, res|
               if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.shareToStory) {
                 const el = document.querySelector('video');
                 const videoUrl = el ? el.src : null;
-                window.Telegram.WebApp.shareToStory({ url: videoUrl });
+                if (videoUrl) {
+                  window.Telegram.WebApp.shareToStory(videoUrl);
+                }
               } else {
                 alert('Publishing via Telegram WebApp is available only inside Telegram.');
               }

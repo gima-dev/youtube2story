@@ -18,7 +18,7 @@
     {
         "label": "Restart y2s_web",
         "type": "shell",
-        "command": "launchctl kickstart -k gui/$(id -u)/com.y2s.web && echo 'y2s_web restarted successfully' || echo 'Failed to restart y2s_web'",
+        "command": "pkill -f 'ruby web.rb' || true; launchctl kickstart -k gui/$(id -u)/com.y2s.web && echo 'y2s_web restarted successfully' || echo 'Failed to restart y2s_web'",
         "presentation": {
             "echo": true,
             "reveal": "always",

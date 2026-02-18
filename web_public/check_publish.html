@@ -40,36 +40,54 @@
           return;
         }
 
-        const canShare = typeof Telegram.WebApp.shareToStory === 'function';
-        const payload = { can_share: !!canShare, url: sourceUrl };
-
         if(typeof Telegram.WebApp.ready === 'function'){
           try{ Telegram.WebApp.ready(); }catch(e){}
         }
 
-        let tries = 0;
-        const t = setInterval(()=>{
-          tries++;
-          let sent = false;
-          if(typeof Telegram.WebApp.sendData === 'function'){
-            try{
-              Telegram.WebApp.sendData(JSON.stringify(payload));
-              sent = true;
-            }catch(e){}
-          }
+        const canShare = typeof Telegram.WebApp.shareToStory === 'function';
+        if(!canShare){
+          setStatus('Ваш аккаунт не поддерживает публикацию историй.', 'Нельзя опубликовать из WebApp.');
+          return;
+        }
 
-          if(sent || tries > 6){
-            clearInterval(t);
-            if(sent){
-              setStatus('Права проверены.', 'Возвращаемся в чат...');
-              if(typeof Telegram.WebApp.close === 'function'){
-                setTimeout(()=>{ try{ Telegram.WebApp.close(); }catch(e){} }, 800);
-              }
-            } else {
-              setStatus('Не удалось завершить проверку.', 'Откройте Web App в Telegram и попробуйте снова.');
+        setStatus('Права подтверждены.', 'Запускаем обработку видео...');
+
+        fetch('/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: sourceUrl })
+        })
+          .then(res => res.json().then(data => ({ ok: res.ok, data })))
+          .then(({ ok, data }) => {
+            if(!ok || (data && data.error)){
+              const msg = (data && data.error) ? String(data.error) : 'Сервер вернул ошибку.';
+              setStatus('Не удалось запустить обработку.', msg);
+              return;
             }
-          }
-        }, 300);
+
+            if(data && data.processed_url){
+              const processed = data.processed_url;
+              try{
+                Telegram.WebApp.shareToStory({ url: processed });
+                setStatus('Открываем редактор историй...', 'Если редактор не открылся, попробуйте еще раз.');
+              }catch(e){
+                setStatus('Не удалось открыть редактор.', e.message || 'Ошибка вызова shareToStory.');
+              }
+              return;
+            }
+
+            const jobId = data && (data.job_id || data.id);
+            if(jobId){
+              setStatus('Видео обрабатывается.', 'Откроем редактор, как только видео будет готово.');
+              window.location.href = '/publish?job_id=' + encodeURIComponent(jobId);
+              return;
+            }
+
+            setStatus('Неожиданный ответ сервера.', 'Попробуйте еще раз.');
+          })
+          .catch(err => {
+            setStatus('Ошибка сети.', err && err.message ? err.message : 'Не удалось связаться с сервером.');
+          });
       }catch(e){
         setStatus('Ошибка проверки.', 'Попробуйте снова.');
       }

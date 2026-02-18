@@ -4,13 +4,27 @@ require 'json'
 require 'securerandom'
 require 'fileutils'
 require 'tmpdir'
+require 'time'
 
 class ProcessWorker
   include Sidekiq::Worker
   sidekiq_options retry: 3
 
-  OUTPUT_DIR = File.join(Dir.pwd, 'web_public', 'outputs')
+  APP_ROOT = File.expand_path('..', __dir__)
+  OUTPUT_DIR = File.join(APP_ROOT, 'web_public', 'outputs')
   FileUtils.mkdir_p(OUTPUT_DIR)
+
+  def write_progress(percent, stage)
+    return unless respond_to?(:jid) && jid
+    payload = {
+      percent: percent,
+      stage: stage,
+      updated_at: Time.now.utc.iso8601
+    }
+    File.write(File.join(OUTPUT_DIR, "#{jid}.progress.json"), payload.to_json)
+  rescue => e
+    Sidekiq.logger.error("ProcessWorker: failed to write progress for jid=#{jid}: #{e}")
+  end
 
   def self.command_exists?(name)
     system("which #{name} > /dev/null 2>&1")
@@ -25,6 +39,7 @@ class ProcessWorker
     end
 
     begin
+      write_progress(5, 'starting')
       out_template = File.join(tmpdir, 'input.%(ext)s')
       cmd = ['yt-dlp', '--no-playlist', '-f', 'best', '-o', out_template, youtube_url]
       Sidekiq.logger.info("ProcessWorker: running yt-dlp: #{cmd.join(' ')}")
@@ -39,6 +54,8 @@ class ProcessWorker
         raise "yt-dlp failed: #{stderr} (exit=#{status.exitstatus})"
       end
 
+      write_progress(40, 'downloaded')
+
       input_files = Dir.glob(File.join(tmpdir, '*'))
       input_file = input_files.first
       raise "downloaded file not found" unless input_file && File.exist?(input_file)
@@ -47,8 +64,18 @@ class ProcessWorker
       final_name = "#{uuid}.mp4"
       final_path = File.join(OUTPUT_DIR, final_name)
 
-      ff_cmd = ['ffmpeg', '-y', '-i', input_file, '-ss', '0', '-t', '30', '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2', '-c:v', 'libx264', '-preset', 'fast', '-crf', '36', '-c:a', 'aac', '-b:a', '96k', final_path]
+      vf = 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p'
+      ff_cmd = [
+        'ffmpeg', '-y', '-i', input_file, '-ss', '0', '-t', '30',
+        '-vf', vf,
+        '-r', '30',
+        '-c:v', 'libx264', '-profile:v', 'baseline', '-level', '3.1', '-preset', 'fast', '-crf', '28',
+        '-movflags', '+faststart',
+        '-c:a', 'aac', '-b:a', '96k',
+        final_path
+      ]
       Sidekiq.logger.info("ProcessWorker: running ffmpeg: #{ff_cmd.join(' ')}")
+      write_progress(60, 'transcoding')
       begin
         ffout, fferr, ffstatus = Open3.capture3(*ff_cmd)
       rescue Errno::ENOENT => e
@@ -60,6 +87,8 @@ class ProcessWorker
         raise "ffmpeg failed: #{fferr} (exit=#{ffstatus.exitstatus})"
       end
 
+      write_progress(90, 'finalizing')
+
       output_rel = "outputs/#{final_name}"
       # write mapping for this job id so web can lookup by job_id
       begin
@@ -70,6 +99,8 @@ class ProcessWorker
       rescue => e
         Sidekiq.logger.error("ProcessWorker: failed to write mapping for jid=#{jid}: #{e}")
       end
+
+      write_progress(100, 'done')
 
       output_rel
     ensure

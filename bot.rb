@@ -23,7 +23,11 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
         can_share = data['can_share']
         source_url = data['url']
         if can_share && source_url
-          bot.api.send_message(chat_id: chat_id, text: 'Права подтверждены — запускаю обработку...')
+          bot.api.send_message(
+            chat_id: chat_id,
+            text: 'Права подтверждены — запускаю обработку...',
+            reply_markup: { remove_keyboard: true }.to_json
+          )
           begin
             uri = URI.parse(WEBAPP_ORIGIN + '/process')
             req = Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json')
@@ -54,7 +58,11 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
             bot.api.send_message(chat_id: chat_id, text: "Ошибка при запуске обработки: #{e.message}")
           end
         else
-          bot.api.send_message(chat_id: chat_id, text: 'К сожалению, ваш аккаунт не поддерживает публикацию историй. Ссылки не обрабатываются.')
+          bot.api.send_message(
+            chat_id: chat_id,
+            text: 'К сожалению, ваш аккаунт не поддерживает публикацию историй. Ссылки не обрабатываются.',
+            reply_markup: { remove_keyboard: true }.to_json
+          )
         end
         next
       end
@@ -69,8 +77,8 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
         puts "📨 Получена YouTube ссылка от #{message.from && message.from.first_name}: #{text}"
         # Send WebApp button to check publish capability first
         check_url = "#{WEBAPP_ORIGIN}/check_publish?url=#{URI.encode_www_form_component(text)}"
-        kb = { inline_keyboard: [[{ text: 'Проверить и открыть редактор', web_app: { url: check_url } }]] }
-        bot.api.send_message(chat_id: chat_id, text: "\u200B", reply_markup: kb.to_json)
+        kb = { inline_keyboard: [[{ text: 'Опубликовать', web_app: { url: check_url } }]] }
+        bot.api.send_message(chat_id: chat_id, text: 'Опубликовать', reply_markup: kb.to_json)
 
       else
         puts "📨 Получено сообщение от #{message.from && message.from.first_name}: #{text}"

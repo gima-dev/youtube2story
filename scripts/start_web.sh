@@ -26,12 +26,11 @@ export GEM_PATH="$GEM_HOME"
 export PATH="/usr/local/opt/ruby/bin:/usr/local/bin:/usr/bin:/bin:$ROOT_DIR/vendor/bundle/ruby/$RUBY_VERSION/bin:$PATH"
 
 # Log files (launchd will also capture stdout/stderr if configured)
-STDOUT_LOG="/tmp/y2s_web.log"
-STDERR_LOG="/tmp/y2s_web.err"
+STDOUT_LOG="$HOME/Library/Logs/y2s_web.log"
+STDERR_LOG="$HOME/Library/Logs/y2s_web.err"
 
 mkdir -p "$(dirname "$STDOUT_LOG")"
 touch "$STDOUT_LOG" "$STDERR_LOG"
-chown $(whoami):admin "$STDOUT_LOG" "$STDERR_LOG" || true
 
 # Exec so pid stays as script process for launchd; use explicit Ruby binary
 exec env BUNDLE_GEMFILE="$BUNDLE_GEMFILE" GEM_HOME="$GEM_HOME" GEM_PATH="$GEM_PATH" \
