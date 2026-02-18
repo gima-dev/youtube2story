@@ -78,3 +78,51 @@ tail -n 200 /tmp/y2s_web.log /tmp/y2s_web.err
 В текущей конфигурации `/usr/local/etc/monit.d/y2s_web.mon` нет явных `start/stop program` для `web.rb`. При `monit restart` Monit остановит процесс, а затем `launchd` (есть LaunchAgent `com.y2s.web` с `KeepAlive`) автоматически запустит `web.rb` заново. Если нужно более явное управление — можно добавить в конфиг Monit директивы `start program` и `stop program`, которые будут вызывать `launchctl load/unload ~/Library/LaunchAgents/com.y2s.web.plist`.
 
 ````
+
+
+## Запуск и конфигурация LaunchAgent (`com.y2s.bot`)
+
+Если вы используете `LaunchAgent` для автозапуска `bot.rb` (файл `~/Library/LaunchAgents/com.y2s.bot.plist`), нужно передать в среду выполнения токен бота — `launchd` не читает `.env` автоматически.
+
+Рекомендуемые варианты:
+
+- Временно (только для текущей сессии):
+
+```bash
+launchctl setenv TELEGRAM_TOKEN "ВАШ_ТОКЕН_ЗДЕСЬ"
+launchctl setenv WEBAPP_ORIGIN "https://youtube.gimadev.win"
+launchctl kickstart -k gui/$(id -u)/com.y2s.bot
+```
+
+- Постоянно (правка plist): добавьте секцию `EnvironmentVariables` в `~/Library/LaunchAgents/com.y2s.bot.plist`:
+
+```xml
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>TELEGRAM_TOKEN</key>
+		<string>ВАШ_ТОКЕН</string>
+		<key>WEBAPP_ORIGIN</key>
+		<string>https://youtube.gimadev.win</string>
+	</dict>
+```
+
+После правки перезагрузите агента:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.y2s.bot.plist 2>/dev/null || true
+launchctl load   ~/Library/LaunchAgents/com.y2s.bot.plist
+launchctl print gui/$(id -u)/com.y2s.bot
+```
+
+Безопасность и примечания:
+- Не сохраняйте токен в публичных репозиториях. Если вы добавили реальный токен в `plist` временно для отладки — замените его на placeholder или используйте защищённое хранилище.
+- Более безопасный подход: хранить токен в macOS Keychain и запускать wrapper-скрипт, который извлекает токен и экспортирует в окружение перед запуском `ruby bot.rb`.
+- `launchctl setenv` полезен для быстрой проверки — значения не сохраняются между сессиями.
+
+Проверка статуса после старта:
+
+```bash
+launchctl print gui/$(id -u)/com.y2s.bot
+sudo monit summary
+tail -n 200 /tmp/y2s_bot.log /tmp/y2s_bot.err
+```

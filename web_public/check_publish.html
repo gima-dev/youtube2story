@@ -3,10 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Check Publish</title>
+  <title>Youtube2story</title>
+  <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
 </head>
 <body>
-  <p>Проверка прав публикации...</p>
+  <div style="padding:12px;background:#f3f8ff;border:1px solid #cfe3ff;border-radius:8px;margin-bottom:12px">
+    <strong>Youtube2story</strong>
+    <div style="color:#4a5a6a;margin-top:6px">Проверяем возможность публикации в Stories.</div>
+  </div>
+  <div id="status" style="padding:12px;border-radius:8px;background:#f6f6f6;color:#333">Проверка прав публикации...</div>
+  <div id="hint" style="margin-top:10px;color:#666;font-size:14px"></div>
   <script>
     (function(){
       function qs(key){
@@ -14,17 +20,58 @@
         return params.get(key);
       }
       const sourceUrl = qs('url') || null;
+      const statusEl = document.getElementById('status');
+      const hintEl = document.getElementById('hint');
+
+      function setStatus(text, hint){
+        statusEl.innerText = text;
+        hintEl.innerText = hint || '';
+      }
+
       try{
-        const hasShare = !!(window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.shareToStory === 'function');
-        const canShare = hasShare; // simple check; could also inspect initDataUnsafe
-        const payload = { can_share: !!canShare, url: sourceUrl };
-        if(window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.sendData === 'function'){
-          Telegram.WebApp.sendData(JSON.stringify(payload));
-        } else {
-          document.body.innerHTML = '<p>Невозможно проверить в этом клиенте.</p>';
+        const inTelegram = !!(window.Telegram && Telegram.WebApp);
+        if(!sourceUrl){
+          setStatus('Не найдена ссылка на YouTube.', 'Вернитесь в чат бота и отправьте ссылку заново.');
+          return;
         }
+
+        if(!inTelegram){
+          setStatus('Откройте мини-приложение внутри Telegram.', 'Нажмите кнопку Web App в чате бота.');
+          return;
+        }
+
+        const canShare = typeof Telegram.WebApp.shareToStory === 'function';
+        const payload = { can_share: !!canShare, url: sourceUrl };
+
+        if(typeof Telegram.WebApp.ready === 'function'){
+          try{ Telegram.WebApp.ready(); }catch(e){}
+        }
+
+        let tries = 0;
+        const t = setInterval(()=>{
+          tries++;
+          let sent = false;
+          if(typeof Telegram.WebApp.sendData === 'function'){
+            try{
+              Telegram.WebApp.sendData(JSON.stringify(payload));
+              sent = true;
+            }catch(e){}
+          }
+
+          if(sent || tries > 6){
+            clearInterval(t);
+            if(sent){
+              setStatus('Права проверены.', 'Возвращаемся в чат...');
+              if(typeof Telegram.WebApp.close === 'function'){
+                setTimeout(()=>{ try{ Telegram.WebApp.close(); }catch(e){} }, 800);
+              }
+            } else {
+              setStatus('Не удалось завершить проверку.', 'Откройте Web App в Telegram и попробуйте снова.');
+            }
+          }
+        }, 300);
       }catch(e){
-        document.body.innerHTML = '<p>Ошибка: '+e.message+'</p>';
+        setStatus('Ошибка проверки.', 'Попробуйте снова.');
       }
     })();
   </script>

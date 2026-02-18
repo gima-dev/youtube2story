@@ -22,7 +22,15 @@ FileUtils.mkdir_p(OUTPUT_DIR)
 server_opts = { Port: PORT }
 
 # TLS теперь терминруется на nginx. Запускаем простой HTTP backend.
-server = WEBrick::HTTPServer.new(server_opts)
+log_dir = File.join(Dir.pwd, 'tmp')
+FileUtils.mkdir_p(log_dir)
+log_path = File.join(log_dir, 'y2s_web.log')
+access_log_path = File.join(log_dir, 'y2s_web_access.log')
+log_file = File.open(log_path, 'a+')
+access_log_file = File.open(access_log_path, 'a+')
+logger = WEBrick::Log.new(log_file)
+access_log_format = '%h %l %u %t \"%r\" %>s %b'
+server = WEBrick::HTTPServer.new(server_opts.merge(Logger: logger, AccessLog: [[access_log_file, access_log_format]]))
 
 # Статика: логируем заголовки для '/' и '/app.js' чтобы понять, что отправляет Telegram WebView
 server.mount_proc '/' do |req, res|
@@ -43,6 +51,7 @@ end
 # Serve check_publish page for WebApp to verify shareToStory availability
 server.mount_proc '/check_publish' do |req, res|
   begin
+    server.logger.info "REQ /check_publish from #{req.remote_ip} headers=#{req.header.inspect}"
     path = File.join(Dir.pwd, 'web_public', 'check_publish.html')
     body = File.read(path)
     res.status = 200
@@ -50,6 +59,22 @@ server.mount_proc '/check_publish' do |req, res|
     res.body = body
   rescue => e
     server.logger.error "ERR_SERVE_CHECK #{e.message}"
+    res.status = 500
+    res.body = 'error'
+  end
+end
+
+# Lightweight probe page to auto-send diagnostics for WebView injection debugging
+server.mount_proc '/probe' do |req, res|
+  begin
+    server.logger.info "REQ /probe from #{req.remote_ip} headers=#{req.header.inspect}"
+    path = File.join(Dir.pwd, 'web_public', 'probe.html')
+    body = File.read(path)
+    res.status = 200
+    res['Content-Type'] = 'text/html'
+    res.body = body
+  rescue => e
+    server.logger.error "ERR_SERVE_PROBE #{e.message}"
     res.status = 500
     res.body = 'error'
   end

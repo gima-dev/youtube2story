@@ -9,6 +9,7 @@
             "echo": true,
             "reveal": "always",
             "panel": "shared",
+            "close": true,
             "showReuseMessage": false,
             "clear": false
         },
@@ -22,6 +23,7 @@
             "echo": true,
             "reveal": "always",
             "panel": "shared",
+            "close": true,
             "showReuseMessage": false,
             "clear": false
         },

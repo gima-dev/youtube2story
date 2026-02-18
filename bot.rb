@@ -3,13 +3,27 @@ require 'telegram/bot'
 require 'dotenv/load'
 require 'net/http'
 require 'json'
+require 'uri'
+
+TOKEN = ENV['TELEGRAM_TOKEN'] || ENV['BOT_TOKEN']
+WEBAPP_ORIGIN = ENV['WEBAPP_ORIGIN'] || 'https://youtube.gimadev.win'
+
+raise 'Missing TELEGRAM token' unless TOKEN
+
+Telegram::Bot::Client.run(TOKEN) do |bot|
+  puts "bot started"
+  bot.listen do |message|
+    begin
+      chat_id = message.chat.id
+      text = message.respond_to?(:text) ? message.text.to_s : ''
+
       # If this message is a reply from WebApp (sendData), handle it first
-      if message.web_app_data && message.web_app_data.data
+      if message.respond_to?(:web_app_data) && message.web_app_data && message.web_app_data.data
         data = JSON.parse(message.web_app_data.data) rescue {}
         can_share = data['can_share']
         source_url = data['url']
         if can_share && source_url
-          bot.api.send_message(chat_id: chat_id, text: "Права подтверждены — запускаю обработку...")
+          bot.api.send_message(chat_id: chat_id, text: 'Права подтверждены — запускаю обработку...')
           begin
             uri = URI.parse(WEBAPP_ORIGIN + '/process')
             req = Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json')
@@ -31,68 +45,40 @@ require 'json'
                   { text: 'Открыть в браузере', url: publish_url }
                 ]]
               }
-              bot.api.send_message(chat_id: chat_id, text: "Готово — нажмите кнопку для публикации:", reply_markup: kb.to_json)
+              bot.api.send_message(chat_id: chat_id, text: 'Готово — нажмите кнопку для публикации:', reply_markup: kb.to_json)
             else
               bot.api.send_message(chat_id: chat_id, text: "Не удалось отправить ссылку на обработку (#{res.code}). Попробуйте позже.")
             end
           rescue => e
-            puts "Ошибка при отправке на обработку: #{e.class}: #{e}" 
+            puts "Ошибка при отправке на обработку: #{e.class}: #{e}"
             bot.api.send_message(chat_id: chat_id, text: "Ошибка при запуске обработки: #{e.message}")
           end
         else
-          bot.api.send_message(chat_id: chat_id, text: "К сожалению, ваш аккаунт не поддерживает публикацию историй. Ссылки не обрабатываются.")
+          bot.api.send_message(chat_id: chat_id, text: 'К сожалению, ваш аккаунт не поддерживает публикацию историй. Ссылки не обрабатываются.')
         end
         next
       end
 
       case text
       when '/start'
-# Отключение буферизации вывода для логирования
-$stdout.sync = true
-$stderr.sync = true
+        $stdout.sync = true
+        $stderr.sync = true
+        bot.api.send_message(chat_id: chat_id, text: "Вставьте ссылку YouTube сюда или откройте редактор через кнопку.")
+
       when /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i
-        puts "📨 Получена YouTube ссылка от #{message.from.first_name}: #{text}"
-        # Вместо немедленной обработки — отправляем WebApp кнопку для проверки прав и подтверждения
+        puts "📨 Получена YouTube ссылка от #{message.from && message.from.first_name}: #{text}"
+        # Send WebApp button to check publish capability first
         check_url = "#{WEBAPP_ORIGIN}/check_publish?url=#{URI.encode_www_form_component(text)}"
         kb = { inline_keyboard: [[{ text: 'Проверить и открыть редактор', web_app: { url: check_url } }]] }
-        bot.api.send_message(chat_id: chat_id, text: "Нажмите кнопку, чтобы проверить возможность публикации и открыть редактор:", reply_markup: kb.to_json)
-      when /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i
-        puts "📨 Получена YouTube ссылка от #{message.from.first_name}: #{text}"
-        bot.api.send_message(chat_id: chat_id, text: "Получил ссылку, запускаю обработку... Это может занять некоторое время.")
-        begin
-          uri = URI.parse(WEBAPP_ORIGIN + '/process')
-          req = Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json')
-          req.body = { url: text }.to_json
-          res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
-            http.request(req)
-          end
-          if res.is_a?(Net::HTTPSuccess)
-            body = JSON.parse(res.body) rescue {}
-            job_id = body['job_id'] || body['id'] || nil
-            publish_url = if job_id
-              "#{WEBAPP_ORIGIN}/publish?job_id=#{URI.encode_www_form_component(job_id)}"
-            else
-              "#{WEBAPP_ORIGIN}/publish"
-            end
-            kb = {
-              inline_keyboard: [[
-                { text: 'Опубликовать (WebApp)', web_app: { url: publish_url } },
-                { text: 'Открыть в браузере', url: publish_url }
-              ]]
-            }
-            bot.api.send_message(chat_id: chat_id, text: "Готово — нажмите кнопку для публикации:", reply_markup: kb.to_json)
-          else
-            bot.api.send_message(chat_id: chat_id, text: "Не удалось отправить ссылку на обработку (#{res.code}). Попробуйте позже.")
-          end
-        rescue => e
-          puts "Ошибка при отправке на обработку: #{e.class}: #{e}" 
-          bot.api.send_message(chat_id: chat_id, text: "Ошибка при запуске обработки: #{e.message}")
-        end
+        bot.api.send_message(chat_id: chat_id, text: "\u200B", reply_markup: kb.to_json)
+
       else
-        puts "📨 Получено сообщение от #{message.from.first_name}: #{text}"
-        # На случай если пользователь напрямую прислал ссылку — можно подсказать открыть Web App
-        bot.api.send_message(chat_id: chat_id, text: "Вы написали: #{text}\nЕсли хотите редактировать и опубликовать в историях, откройте загрузчик через кнопку.")
+        puts "📨 Получено сообщение от #{message.from && message.from.first_name}: #{text}"
+        bot.api.send_message(chat_id: chat_id, text: "Вы написали: #{text}\nЕсли хотите редактировать и опубликовать в историях, отправьте ссылку YouTube.")
       end
+
+    rescue => e
+      puts "Handler error: #{e.class}: #{e}\n#{e.backtrace.join("\n")}" rescue nil
     end
   end
 end

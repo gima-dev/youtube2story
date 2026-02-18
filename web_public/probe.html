@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WebApp Probe</title>
+  <style>body{font-family:Helvetica,Arial,sans-serif;padding:12px}pre{white-space:pre-wrap;background:#f6f6f6;padding:8px;border-radius:6px}</style>
+  <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
+</head>
+<body>
+  <h3>Telegram WebApp Probe</h3>
+  <p>This page attempts to detect Telegram.WebApp injection and will POST diagnostics to the origin at <code>/__ping</code>.</p>
+  <button id="send">Отправить диагностику</button>
+  <div id="status" style="margin-top:8px;color:#444"></div>
+  <h4>Diag</h4>
+  <pre id="diag">(waiting)</pre>
+
+  <script>
+  function buildDiag(){
+    const hashRaw = location.hash ? location.hash.replace(/^#/, '') : '';
+    const launchParams = new URLSearchParams(hashRaw);
+    const launchParamsPresent = Array.from(launchParams.keys()).some(k => k.indexOf('tgWebApp') === 0);
+    const tg = window.Telegram || null;
+    const sdkLoaded = !!tg;
+    const hasWebApp = !!(tg && tg.WebApp);
+    const webapp = hasWebApp ? tg.WebApp : {};
+    const isMiniAppContext = !!(hasWebApp && (launchParamsPresent || (webapp && webapp.initData)));
+    const diag = {
+      inTelegram: hasWebApp,
+      sdkLoaded,
+      launchParamsPresent,
+      isMiniAppContext,
+      tgWebAppVersion: launchParams.get('tgWebAppVersion') || null,
+      tgWebAppPlatform: launchParams.get('tgWebAppPlatform') || null,
+      hasReady: !!(webapp && typeof webapp.ready === 'function'),
+      hasSendData: !!(webapp && typeof webapp.sendData === 'function'),
+      hasShareToStory: !!(webapp && typeof webapp.shareToStory === 'function'),
+      initData: webapp && webapp.initData ? webapp.initData : null,
+      initDataUnsafe: webapp && webapp.initDataUnsafe ? webapp.initDataUnsafe : null,
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      vendor: navigator.vendor,
+      referrer: document.referrer || null,
+      top_same_as_self: (function(){ try { return window.top === window.self } catch(e){ return null } })(),
+      href: location.href,
+      fragment: location.hash || null,
+      screen: { w: screen.width, h: screen.height },
+      time: new Date().toISOString()
+    };
+    return diag;
+  }
+
+  // Enhanced diagnostics collectors
+  const __diag_extra = {
+    errors: [],
+    unhandledRejections: [],
+    console: []
+  };
+
+  // Wrap console methods to capture messages
+  ['log','info','warn','error','debug'].forEach(fn => {
+    try{
+      const orig = console[fn].bind(console);
+      console[fn] = function(...args){
+        try{ __diag_extra.console.push({level:fn, args: args.map(a=>{ try { return typeof a==='object'? JSON.stringify(a): String(a) } catch(e){ return String(a) } }), time: new Date().toISOString() }) }catch(e){}
+        return orig(...args);
+      }
+    }catch(e){}
+  });
+
+  window.addEventListener('error', function(ev){
+    try{
+      __diag_extra.errors.push({message: ev.message, filename: ev.filename, lineno: ev.lineno, colno: ev.colno, error: ev.error && ev.error.stack ? String(ev.error.stack) : null, time: new Date().toISOString()});
+      // send immediately
+      sendDiag(false, {trigger: 'window.error', error: __diag_extra.errors[__diag_extra.errors.length-1]});
+    }catch(e){}
+  });
+
+  window.addEventListener('unhandledrejection', function(ev){
+    try{
+      const reason = ev.reason;
+      const entry = {reason: typeof reason === 'object' && reason !== null && reason.stack ? String(reason.stack) : String(reason), time: new Date().toISOString()};
+      __diag_extra.unhandledRejections.push(entry);
+      sendDiag(false, {trigger: 'unhandledrejection', rejection: entry});
+    }catch(e){}
+  });
+
+  async function sendDiag(manual=false){
+    const diag = buildDiag();
+    if (manual) diag.manual = true;
+    // attach extra collected info
+    diag.extra = __diag_extra;
+    if (sendDiag._extra_event) diag._event = sendDiag._extra_event;
+    document.getElementById('diag').innerText = JSON.stringify(diag, null, 2);
+    document.getElementById('status').innerText = 'Отправка...';
+    try{
+      const res = await fetch('/__ping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(diag) });
+      if (res.ok){
+        document.getElementById('status').innerText = 'Отправлено';
+      } else {
+        document.getElementById('status').innerText = 'Ошибка ответа: '+res.status;
+      }
+    }catch(e){
+      document.getElementById('status').innerText = 'Fetch error: '+e.message;
+    }
+  }
+
+  document.getElementById('send').addEventListener('click', ()=>sendDiag(true));
+
+  // Auto-send once on load to capture automatic injection state
+  window.addEventListener('load', ()=>{
+    try{
+      if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.ready === 'function') {
+        window.Telegram.WebApp.ready();
+      }
+    }catch(e){}
+    setTimeout(()=>sendDiag(false), 200);
+  });
+
+  // Poll for Telegram.WebApp appearing (some clients inject after load). Poll for up to 5s.
+  (function pollWebApp(){
+    const start = Date.now();
+    const interval = setInterval(()=>{
+      if (window.Telegram && window.Telegram.WebApp){
+        sendDiag(false).catch(()=>{});
+        clearInterval(interval);
+        return;
+      }
+      if (Date.now() - start > 5000){ clearInterval(interval); }
+    }, 250);
+  })();
+
+  // Helper to allow error handlers to pass extra event to next sendDiag
+  window.__probe_set_event = function(obj){ sendDiag._extra_event = obj };
+  </script>
+</body>
+</html>
