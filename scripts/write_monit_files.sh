@@ -4,7 +4,15 @@ UIDVAR="${SUDO_UID:-$(id -u)}"
 
 cat > /tmp/y2s_web.mon <<EOF
 check process y2s_web matching "web.rb"
-  if failed port 443 protocol https for 2 cycles then alert
+  if does not exist for 2 cycles then alert
+  group y2s
+
+check host y2s_web_health with address 127.0.0.1
+  if failed port 8080 protocol http request "/health" with timeout 10 seconds for 2 cycles then alert
+  group y2s
+
+check host y2s_web_db_health with address 127.0.0.1
+  if failed port 8080 protocol http request "/db_health" with timeout 10 seconds for 3 cycles then alert
   group y2s
 EOF
 

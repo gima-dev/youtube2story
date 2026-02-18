@@ -98,6 +98,19 @@ server.mount_proc '/app.js' do |req, res|
   end
 end
 
+server.mount_proc '/health' do |req, res|
+  begin
+    res.status = 200
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: true, service: 'y2s_web' }.to_json)
+  rescue => e
+    server.logger.error "HEALTH_ERR #{e.class}: #{e.message}"
+    res.status = 500
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: false, error: e.message }.to_json)
+  end
+end
+
 server.mount_proc '/db_health' do |req, res|
   begin
     db_url = ENV['DATABASE_URL']

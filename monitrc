@@ -6,22 +6,42 @@ set httpd port 2812 and
   allow 127.0.0.1
   # Web UI credentials (replace CHANGEME with secure password)
   allow admin:CHANGEME
-    allow admin:
 
-# Web: проверяет HTTPS на localhost:443 и перезагружает LaunchAgent если упал
-check host y2s_web with address 127.0.0.1
-  if failed port 443 protocol https with timeout 10 seconds then exec "/bin/sh -c 'launchctl unload ~/Library/LaunchAgents/com.y2s.web.plist 2>/dev/null || true; sleep 1; launchctl load ~/Library/LaunchAgents/com.y2s.web.plist'"
+# Web: только мониторинг (без start/stop/restart)
+check host y2s_web_edge with address youtube.gimadev.win
+  if failed port 443 protocol https with timeout 10 seconds for 2 cycles then alert
+
+check host y2s_web_health with address 127.0.0.1
+  if failed port 8080 protocol http request "/health" with timeout 10 seconds for 2 cycles then alert
+
+check host y2s_web_db_health with address 127.0.0.1
+  if failed port 8080 protocol http request "/db_health" with timeout 10 seconds for 3 cycles then alert
 
 # Bot: проверяет запущенный процесс по совпадению 'bot.rb'
 check process y2s_bot matching "bot.rb"
-  start program = "/bin/sh -c 'launchctl load ~/Library/LaunchAgents/com.y2s.bot.plist'"
-  stop program  = "/bin/sh -c 'launchctl unload ~/Library/LaunchAgents/com.y2s.bot.plist'"
+  if does not exist for 2 cycles then alert
 
 # Optional: alert example (configure SMTP separately)
 # set alert you@example.com
 
 # Sidekiq: monitor Sidekiq worker launched via LaunchAgent
 check process y2s_sidekiq matching "sidekiq"
-  start program = "/bin/sh -c 'launchctl load ~/Library/LaunchAgents/com.y2s.sidekiq.plist'"
-  stop program  = "/bin/sh -c 'launchctl unload ~/Library/LaunchAgents/com.y2s.sidekiq.plist'"
+  if does not exist for 2 cycles then alert
+
+# Legacy checks restored (monitoring only)
+check process nginx with pidfile /usr/local/var/run/nginx.pid
+  if failed port 80 protocol http with timeout 10 seconds then alert
+  if failed port 443 protocol https with timeout 10 seconds then alert
+
+check process cloudflared matching "cloudflared"
+  if does not exist for 2 cycles then alert
+
+check host youtube_public with address youtube.gimadev.win
+  if failed port 443 protocol https with timeout 10 seconds for 3 cycles then alert
+
+check host gimadev_public with address gimadev.win
+  if failed port 443 protocol https with timeout 15 seconds for 3 cycles then alert
+
+check host origin_local with address 127.0.0.1
+  if failed port 8080 protocol http with timeout 5 seconds for 3 cycles then alert
 
