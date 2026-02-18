@@ -115,6 +115,7 @@
         return params.get(key);
       }
       const sourceUrl = qs('url') || null;
+      const tgUserIdFromQuery = qs('tg_user_id');
       const statusEl = document.getElementById('status');
       const hintEl = document.getElementById('hint');
 
@@ -123,51 +124,55 @@
         hintEl.innerText = hint || '';
       }
 
-      try{
-        const inTelegram = !!(window.Telegram && Telegram.WebApp);
-        if(!sourceUrl){
-          setStatus('Не найдена ссылка на YouTube.', 'Вернитесь в чат бота и отправьте ссылку заново.');
-          return;
+      function parseTelegramProfile(){
+        try{
+          if(!(window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user)){
+            return {};
+          }
+          const user = Telegram.WebApp.initDataUnsafe.user || {};
+          return {
+            tg_user_id: user.id || null,
+            username: user.username || null,
+            first_name: user.first_name || null,
+            last_name: user.last_name || null,
+            language_code: user.language_code || null
+          };
+        }catch(e){
+          return {};
         }
+      }
 
-        if(!inTelegram){
-          setStatus('Откройте мини-приложение внутри Telegram.', 'Нажмите кнопку Web App в чате бота.');
-          return;
-        }
+      function normalizeTgUserId(value){
+        if(value === null || value === undefined) return null;
+        const asString = String(value).trim();
+        if(!asString) return null;
+        const asNumber = Number(asString);
+        if(!Number.isFinite(asNumber) || asNumber <= 0) return null;
+        return String(Math.trunc(asNumber));
+      }
 
-        if(typeof Telegram.WebApp.ready === 'function'){
-          try{ Telegram.WebApp.ready(); }catch(e){}
-        }
-
-        const canShare = typeof Telegram.WebApp.shareToStory === 'function';
-        if(!canShare){
-          setStatus('Ваш аккаунт не поддерживает публикацию историй.', 'Нельзя опубликовать из WebApp.');
-          return;
-        }
-
+      function startProcessing(tgProfile, canShare){
         setStatus('Права подтверждены.', 'Запускаем обработку видео...');
+        const requestPayload = {
+          url: sourceUrl,
+          can_share: !!canShare,
+          tg_user_id: normalizeTgUserId(tgProfile.tg_user_id || tgUserIdFromQuery)
+        };
+        if(tgProfile.username) requestPayload.username = tgProfile.username;
+        if(tgProfile.first_name) requestPayload.first_name = tgProfile.first_name;
+        if(tgProfile.last_name) requestPayload.last_name = tgProfile.last_name;
+        if(tgProfile.language_code) requestPayload.language_code = tgProfile.language_code;
 
         fetch('/process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: sourceUrl })
+          body: JSON.stringify(requestPayload)
         })
           .then(res => res.json().then(data => ({ ok: res.ok, data })))
           .then(({ ok, data }) => {
             if(!ok || (data && data.error)){
               const msg = (data && data.error) ? String(data.error) : 'Сервер вернул ошибку.';
               setStatus('Не удалось запустить обработку.', msg);
-              return;
-            }
-
-            if(data && data.processed_url){
-              const processed = data.processed_url;
-              try{
-                Telegram.WebApp.shareToStory({ url: processed });
-                setStatus('Открываем редактор историй...', 'Если редактор не открылся, попробуйте еще раз.');
-              }catch(e){
-                setStatus('Не удалось открыть редактор.', e.message || 'Ошибка вызова shareToStory.');
-              }
               return;
             }
 
@@ -183,6 +188,63 @@
           .catch(err => {
             setStatus('Ошибка сети.', err && err.message ? err.message : 'Не удалось связаться с сервером.');
           });
+      }
+
+      try{
+        const inTelegram = !!(window.Telegram && Telegram.WebApp);
+        const tgProfile = parseTelegramProfile();
+        const tgUserId = normalizeTgUserId(tgProfile.tg_user_id || tgUserIdFromQuery);
+        if(!sourceUrl){
+          setStatus('Не найдена ссылка на YouTube.', 'Вернитесь в чат бота и отправьте ссылку заново.');
+          return;
+        }
+
+        if(!inTelegram){
+          setStatus('Откройте мини-приложение внутри Telegram.', 'Нажмите кнопку Web App в чате бота.');
+          return;
+        }
+
+        if(typeof Telegram.WebApp.ready === 'function'){
+          try{ Telegram.WebApp.ready(); }catch(e){}
+        }
+
+        function runCapabilityCheck(){
+          const canShare = typeof Telegram.WebApp.shareToStory === 'function';
+          if(!canShare){
+            setStatus('Ваш аккаунт не поддерживает публикацию историй.', 'Нельзя опубликовать из WebApp.');
+            return;
+          }
+          startProcessing(tgProfile, true);
+        }
+
+        if(!tgUserId){
+          runCapabilityCheck();
+          return;
+        }
+
+        setStatus('Проверяем сохраненное состояние...', 'Восстанавливаем последнюю сессию публикации.');
+        fetch('/user_state?tg_user_id=' + encodeURIComponent(tgUserId) + '&url=' + encodeURIComponent(sourceUrl))
+          .then(res => res.json().then(data => ({ ok: res.ok, data })))
+          .then(({ ok, data }) => {
+            if(!ok || !data || data.ok === false){
+              runCapabilityCheck();
+              return;
+            }
+
+            if(data.job_id && (data.status === 'queued' || data.status === 'processing' || data.status === 'done')){
+              setStatus('Найдена активная обработка.', 'Открываем сохраненный прогресс.');
+              window.location.href = '/publish?job_id=' + encodeURIComponent(data.job_id);
+              return;
+            }
+
+            if(data.can_share === true){
+              startProcessing(tgProfile, true);
+              return;
+            }
+
+            runCapabilityCheck();
+          })
+          .catch(() => runCapabilityCheck());
       }catch(e){
         setStatus('Ошибка проверки.', 'Попробуйте снова.');
       }

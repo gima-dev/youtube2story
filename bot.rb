@@ -76,7 +76,9 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
       when /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i
         puts "📨 Получена YouTube ссылка от #{message.from && message.from.first_name}: #{text}"
         # Send WebApp button to check publish capability first
+        tg_user_id = message.from && message.from.id
         check_url = "#{WEBAPP_ORIGIN}/check_publish?url=#{URI.encode_www_form_component(text)}"
+        check_url += "&tg_user_id=#{URI.encode_www_form_component(tg_user_id.to_s)}" if tg_user_id
         kb = { inline_keyboard: [[{ text: 'Опубликовать', web_app: { url: check_url } }]] }
         bot.api.send_message(chat_id: chat_id, text: 'Опубликовать', reply_markup: kb.to_json)
 

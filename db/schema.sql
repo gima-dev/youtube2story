@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS users (
   language_code TEXT,
   timezone TEXT,
   is_premium BOOLEAN NOT NULL DEFAULT FALSE,
+  has_story_access BOOLEAN,
+  story_access_checked_at TIMESTAMPTZ,
+  last_webapp_seen_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

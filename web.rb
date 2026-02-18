@@ -22,6 +22,139 @@ APP_ROOT = File.expand_path(__dir__)
 OUTPUT_DIR = File.join(APP_ROOT, 'web_public', 'outputs')
 FileUtils.mkdir_p(OUTPUT_DIR)
 
+def db_available?
+  db_url = ENV['DATABASE_URL']
+  !db_url.nil? && !db_url.empty?
+end
+
+def with_db
+  raise 'DATABASE_URL is missing' unless db_available?
+  PG.connect(ENV['DATABASE_URL']) do |conn|
+    yield conn
+  end
+end
+
+def ensure_runtime_schema
+  return unless db_available?
+
+  with_db do |conn|
+    conn.exec "CREATE EXTENSION IF NOT EXISTS pgcrypto"
+
+    conn.exec <<~SQL
+      CREATE TABLE IF NOT EXISTS users (
+        id BIGSERIAL PRIMARY KEY,
+        telegram_user_id BIGINT NOT NULL UNIQUE,
+        username TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        language_code TEXT,
+        is_premium BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    SQL
+
+    conn.exec <<~SQL
+      CREATE TABLE IF NOT EXISTS jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+        sidekiq_jid TEXT UNIQUE,
+        source_platform TEXT NOT NULL DEFAULT 'youtube',
+        source_url TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        stage TEXT,
+        progress_percent SMALLINT NOT NULL DEFAULT 0,
+        error_message TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        started_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    SQL
+
+    conn.exec "ALTER TABLE users ADD COLUMN IF NOT EXISTS has_story_access BOOLEAN"
+    conn.exec "ALTER TABLE users ADD COLUMN IF NOT EXISTS story_access_checked_at TIMESTAMPTZ"
+    conn.exec "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_webapp_seen_at TIMESTAMPTZ"
+    conn.exec "CREATE INDEX IF NOT EXISTS idx_jobs_sidekiq_jid ON jobs(sidekiq_jid)"
+    conn.exec "CREATE INDEX IF NOT EXISTS idx_jobs_user_source_created_at ON jobs(user_id, source_url, created_at DESC)"
+  end
+rescue => e
+  warn("DB schema bootstrap warning: #{e.class}: #{e.message}")
+end
+
+def normalize_tg_user_id(value)
+  return nil if value.nil?
+  numeric = value.to_s.strip
+  return nil if numeric.empty?
+  number = numeric.to_i
+  number > 0 ? number : nil
+end
+
+def upsert_user(conn, tg_user_id, profile = {}, can_share: nil)
+  return nil if tg_user_id.nil?
+
+  now_checked = can_share.nil? ? nil : Time.now.utc
+  result = conn.exec_params(
+    <<~SQL,
+      INSERT INTO users (
+        telegram_user_id,
+        username,
+        first_name,
+        last_name,
+        language_code,
+        has_story_access,
+        story_access_checked_at,
+        last_webapp_seen_at,
+        updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+      ON CONFLICT (telegram_user_id)
+      DO UPDATE SET
+        username = COALESCE(EXCLUDED.username, users.username),
+        first_name = COALESCE(EXCLUDED.first_name, users.first_name),
+        last_name = COALESCE(EXCLUDED.last_name, users.last_name),
+        language_code = COALESCE(EXCLUDED.language_code, users.language_code),
+        has_story_access = COALESCE(EXCLUDED.has_story_access, users.has_story_access),
+        story_access_checked_at = COALESCE(EXCLUDED.story_access_checked_at, users.story_access_checked_at),
+        last_webapp_seen_at = NOW(),
+        updated_at = NOW()
+      RETURNING id
+    SQL
+    [
+      tg_user_id,
+      profile['username'],
+      profile['first_name'],
+      profile['last_name'],
+      profile['language_code'],
+      can_share,
+      now_checked
+    ]
+  )
+  row = result.first
+  row && row['id'] ? row['id'].to_i : nil
+rescue => _e
+  nil
+end
+
+def find_latest_user_job(conn, user_id, source_url)
+  return nil if user_id.nil? || source_url.nil? || source_url.empty?
+
+  conn.exec_params(
+    <<~SQL,
+      SELECT sidekiq_jid, status, stage, progress_percent, metadata->>'output' AS output
+      FROM jobs
+      WHERE user_id = $1
+        AND source_url = $2
+        AND status IN ('queued', 'processing', 'done')
+      ORDER BY created_at DESC
+      LIMIT 1
+    SQL
+    [user_id, source_url]
+  ).first
+end
+
+ensure_runtime_schema
+
 server_opts = { Port: PORT }
 
 # TLS теперь терминруется на nginx. Запускаем простой HTTP backend.
@@ -137,6 +270,50 @@ server.mount_proc '/db_health' do |req, res|
   end
 end
 
+server.mount_proc '/user_state' do |req, res|
+  begin
+    tg_user_id = normalize_tg_user_id(req.query['tg_user_id'])
+    source_url = req.query['url'].to_s
+    if tg_user_id.nil?
+      res.status = 400
+      res['Content-Type'] = 'application/json'
+      res.body =({ error: 'missing tg_user_id' }.to_json)
+      next
+    end
+
+    payload = { ok: true, can_share: false, job_id: nil, status: nil, progress: nil, stage: nil }
+
+    if db_available?
+      with_db do |conn|
+        user_row = conn.exec_params(
+          'SELECT id, COALESCE(has_story_access, FALSE) AS has_story_access FROM users WHERE telegram_user_id = $1 LIMIT 1',
+          [tg_user_id]
+        ).first
+
+        if user_row
+          payload[:can_share] = (user_row['has_story_access'] == 't')
+          latest = find_latest_user_job(conn, user_row['id'].to_i, source_url)
+          if latest
+            payload[:job_id] = latest['sidekiq_jid']
+            payload[:status] = latest['status']
+            payload[:progress] = latest['progress_percent']&.to_i
+            payload[:stage] = latest['stage']
+            payload[:output] = latest['output']
+          end
+        end
+      end
+    end
+
+    res.status = 200
+    res['Content-Type'] = 'application/json'
+    res.body = payload.to_json
+  rescue => e
+    res.status = 500
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: false, error: e.message }.to_json)
+  end
+end
+
 # Serve other static assets (outputs etc.) via file handler
 server.mount '/outputs', WEBrick::HTTPServlet::FileHandler, File.join(Dir.pwd, 'web_public', 'outputs')
 
@@ -161,6 +338,12 @@ server.mount_proc "/process" do |req, res|
     body = req.body || ''
     data = JSON.parse(body) rescue {}
     youtube_url = data['url']
+    tg_user_id = normalize_tg_user_id(data['tg_user_id'])
+    can_share = if data.key?('can_share')
+      data['can_share'] == true
+    else
+      nil
+    end
 
     unless youtube_url && youtube_url.start_with?('http')
       res.status = 400
@@ -176,7 +359,51 @@ server.mount_proc "/process" do |req, res|
       next
     end
 
-    jid = ProcessWorker.perform_async(youtube_url)
+    reused_job = nil
+    user_id = nil
+    if db_available? && tg_user_id
+      with_db do |conn|
+        user_id = upsert_user(conn, tg_user_id, data, can_share: can_share)
+        reused_job = find_latest_user_job(conn, user_id, youtube_url)
+      end
+    end
+
+    if reused_job
+      res.status = 200
+      res['Content-Type'] = 'application/json'
+      res.body =({
+        job_id: reused_job['sidekiq_jid'],
+        status: reused_job['status'],
+        reused: true,
+        progress: reused_job['progress_percent']&.to_i,
+        stage: reused_job['stage']
+      }.to_json)
+      next
+    end
+
+    jid = ProcessWorker.perform_async(youtube_url, tg_user_id)
+
+    if db_available?
+      begin
+        with_db do |conn|
+          user_id ||= upsert_user(conn, tg_user_id, data, can_share: can_share) if tg_user_id
+          if user_id
+            conn.exec_params(
+              <<~SQL,
+                INSERT INTO jobs (user_id, sidekiq_jid, source_url, status, stage, progress_percent, metadata, created_at, updated_at)
+                VALUES ($1, $2, $3, 'queued', 'queued', 0, '{}'::jsonb, NOW(), NOW())
+                ON CONFLICT (sidekiq_jid)
+                DO NOTHING
+              SQL
+              [user_id, jid, youtube_url]
+            )
+          end
+        end
+      rescue => e
+        server.logger.error("PROCESS_DB_WRITE_ERR #{e.class}: #{e.message}")
+      end
+    end
+
     res.status = 202
     res['Content-Type'] = 'application/json'
     res.body =({ job_id: jid, status: 'queued' }.to_json)
@@ -195,6 +422,35 @@ server.mount_proc "/job_status" do |req, res|
       res['Content-Type'] = 'application/json'
       res.body =({ error: 'missing job_id' }.to_json)
       next
+    end
+
+    if db_available?
+      begin
+        db_row = nil
+        with_db do |conn|
+          db_row = conn.exec_params(
+            "SELECT status, progress_percent, stage, metadata->>'output' AS output, error_message FROM jobs WHERE sidekiq_jid = $1 LIMIT 1",
+            [job_id]
+          ).first
+        end
+
+        if db_row
+          payload = {
+            status: db_row['status'],
+            progress: db_row['progress_percent']&.to_i,
+            stage: db_row['stage'],
+            output: db_row['output'],
+            error: db_row['error_message']
+          }
+          payload[:progress] = 100 if payload[:status] == 'done'
+          res.status = 200
+          res['Content-Type'] = 'application/json'
+          res.body = payload.to_json
+          next
+        end
+      rescue => e
+        server.logger.error("JOB_STATUS_DB_READ_ERR #{e.class}: #{e.message}")
+      end
     end
 
     mapping_path = File.join(OUTPUT_DIR, "#{job_id}.json")

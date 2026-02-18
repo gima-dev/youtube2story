@@ -6,6 +6,7 @@ require 'securerandom'
 require 'fileutils'
 require 'tmpdir'
 require 'time'
+require 'pg'
 
 class ProcessWorker
   include Sidekiq::Worker
@@ -15,6 +16,83 @@ class ProcessWorker
   OUTPUT_DIR = File.join(APP_ROOT, 'web_public', 'outputs')
   FileUtils.mkdir_p(OUTPUT_DIR)
 
+  def db_available?
+    db_url = ENV['DATABASE_URL']
+    !db_url.nil? && !db_url.empty?
+  end
+
+  def with_db
+    return unless db_available?
+
+    PG.connect(ENV['DATABASE_URL']) do |conn|
+      yield conn
+    end
+  end
+
+  def update_job_progress(percent, stage)
+    return unless respond_to?(:jid) && jid
+
+    with_db do |conn|
+      conn.exec_params(
+        <<~SQL,
+          UPDATE jobs
+          SET progress_percent = $1,
+              stage = $2,
+              status = 'processing',
+              started_at = COALESCE(started_at, NOW()),
+              updated_at = NOW()
+          WHERE sidekiq_jid = $3
+        SQL
+        [percent.to_i, stage.to_s, jid]
+      )
+    end
+  rescue => e
+    Sidekiq.logger.error("ProcessWorker: failed to update db progress for jid=#{jid}: #{e}")
+  end
+
+  def mark_job_done(output_rel)
+    return unless respond_to?(:jid) && jid
+
+    with_db do |conn|
+      conn.exec_params(
+        <<~SQL,
+          UPDATE jobs
+          SET status = 'done',
+              stage = 'done',
+              progress_percent = 100,
+              finished_at = NOW(),
+              metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{output}', to_jsonb($1::text), true),
+              updated_at = NOW()
+          WHERE sidekiq_jid = $2
+        SQL
+        [output_rel, jid]
+      )
+    end
+  rescue => e
+    Sidekiq.logger.error("ProcessWorker: failed to mark db job done for jid=#{jid}: #{e}")
+  end
+
+  def mark_job_failed(error_message)
+    return unless respond_to?(:jid) && jid
+
+    with_db do |conn|
+      conn.exec_params(
+        <<~SQL,
+          UPDATE jobs
+          SET status = 'failed',
+              stage = 'failed',
+              finished_at = NOW(),
+              error_message = $1,
+              updated_at = NOW()
+          WHERE sidekiq_jid = $2
+        SQL
+        [error_message.to_s[0, 4000], jid]
+      )
+    end
+  rescue => e
+    Sidekiq.logger.error("ProcessWorker: failed to mark db job failed for jid=#{jid}: #{e}")
+  end
+
   def write_progress(percent, stage)
     return unless respond_to?(:jid) && jid
     payload = {
@@ -23,6 +101,7 @@ class ProcessWorker
       updated_at: Time.now.utc.iso8601
     }
     File.write(File.join(OUTPUT_DIR, "#{jid}.progress.json"), payload.to_json)
+    update_job_progress(percent, stage)
   rescue => e
     Sidekiq.logger.error("ProcessWorker: failed to write progress for jid=#{jid}: #{e}")
   end
@@ -31,7 +110,7 @@ class ProcessWorker
     system("which #{name} > /dev/null 2>&1")
   end
 
-  def perform(youtube_url)
+  def perform(youtube_url, _tg_user_id = nil)
     tmpdir = File.join(Dir.tmpdir || '/tmp', "y2s-#{SecureRandom.hex(6)}")
     Dir.mkdir(tmpdir) unless Dir.exist?(tmpdir)
 
@@ -102,8 +181,12 @@ class ProcessWorker
       end
 
       write_progress(100, 'done')
+      mark_job_done(output_rel)
 
       output_rel
+    rescue => e
+      mark_job_failed(e.message)
+      raise
     ensure
       FileUtils.remove_entry(tmpdir) if tmpdir && Dir.exist?(tmpdir)
     end
