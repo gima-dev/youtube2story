@@ -50,10 +50,19 @@ class ProcessWorker
     Sidekiq.logger.error("ProcessWorker: failed to update db progress for jid=#{jid}: #{e}")
   end
 
-  def mark_job_done(output_rel)
+  def mark_job_done(output_rel, video_id = nil)
     return unless respond_to?(:jid) && jid
 
     with_db do |conn|
+      # Build metadata update - always update output, optionally update video_id
+      metadata_updates = "metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{output}', to_jsonb($1::text), true)"
+      params = [output_rel, jid]
+      
+      if video_id
+        metadata_updates = "metadata = jsonb_set(jsonb_set(COALESCE(metadata, '{}'::jsonb), '{output}', to_jsonb($1::text), true), '{video_id}', to_jsonb($3::text), true)"
+        params = [output_rel, jid, video_id]
+      end
+      
       conn.exec_params(
         <<~SQL,
           UPDATE jobs
@@ -61,11 +70,11 @@ class ProcessWorker
               stage = 'done',
               progress_percent = 100,
               finished_at = NOW(),
-              metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{output}', to_jsonb($1::text), true),
+              #{metadata_updates},
               updated_at = NOW()
           WHERE sidekiq_jid = $2
         SQL
-        [output_rel, jid]
+        params
       )
     end
   rescue => e
@@ -110,6 +119,18 @@ class ProcessWorker
     system("which #{name} > /dev/null 2>&1")
   end
 
+  def extract_youtube_id(url)
+    # Handle various YouTube URL formats
+    case url
+    when /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+      $1
+    when /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/
+      $1
+    else
+      nil
+    end
+  end
+
   def perform(youtube_url, _tg_user_id = nil)
     tmpdir = File.join(Dir.tmpdir || '/tmp', "y2s-#{SecureRandom.hex(6)}")
     Dir.mkdir(tmpdir) unless Dir.exist?(tmpdir)
@@ -117,6 +138,9 @@ class ProcessWorker
     unless self.class.command_exists?('yt-dlp') && self.class.command_exists?('ffmpeg')
       raise "yt-dlp or ffmpeg not installed on host"
     end
+
+    # Extract YouTube video ID for thumbnail
+    video_id = extract_youtube_id(youtube_url)
 
     begin
       write_progress(5, 'starting')
@@ -173,7 +197,7 @@ class ProcessWorker
       # write mapping for this job id so web can lookup by job_id
       begin
         if respond_to?(:jid) && jid
-          mapping = { output: output_rel }
+          mapping = { output: output_rel, video_id: video_id }
           File.write(File.join(OUTPUT_DIR, "#{jid}.json"), mapping.to_json)
         end
       rescue => e
@@ -181,7 +205,7 @@ class ProcessWorker
       end
 
       write_progress(100, 'done')
-      mark_job_done(output_rel)
+      mark_job_done(output_rel, video_id)
 
       output_rel
     rescue => e

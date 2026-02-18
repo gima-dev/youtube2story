@@ -468,7 +468,7 @@ server.mount_proc "/job_status" do |req, res|
         db_row = nil
         with_db do |conn|
           db_row = conn.exec_params(
-            "SELECT status, progress_percent, stage, metadata->>'output' AS output, error_message FROM jobs WHERE sidekiq_jid = $1 LIMIT 1",
+            "SELECT status, progress_percent, stage, metadata->>'output' AS output, metadata->>'video_id' AS video_id, error_message FROM jobs WHERE sidekiq_jid = $1 LIMIT 1",
             [job_id]
           ).first
         end
@@ -479,6 +479,7 @@ server.mount_proc "/job_status" do |req, res|
             progress: db_row['progress_percent']&.to_i,
             stage: db_row['stage'],
             output: db_row['output'],
+            video_id: db_row['video_id'],
             error: db_row['error_message']
           }
           payload[:progress] = 100 if payload[:status] == 'done'
@@ -502,7 +503,7 @@ server.mount_proc "/job_status" do |req, res|
       data = JSON.parse(File.read(mapping_path)) rescue {}
       res.status = 200
       res['Content-Type'] = 'application/json'
-      res.body =({ status: 'done', output: data['output'], progress: 100, stage: 'done' }.to_json)
+      res.body =({ status: 'done', output: data['output'], video_id: data['video_id'], progress: 100, stage: 'done' }.to_json)
     else
       res.status = 200
       res['Content-Type'] = 'application/json'
@@ -853,7 +854,11 @@ server.mount_proc '/publish' do |req, res|
                 updateProgress(true, 100, 'done');
                 const src = '#{HOST}' + '/' + j.output;
                 videoUrl = src;
-                previewEl.innerHTML = '';
+                let posterSrc = src.replace(/\.[^.]+$/, '.jpg');
+                if (j.video_id) {
+                  posterSrc = 'https://img.youtube.com/vi/' + j.video_id + '/maxresdefault.jpg';
+                }
+                previewEl.innerHTML = '<img src="'+posterSrc+'" alt="preview" style="width:100%;border-radius:18px;background:#0c0c0c">';
                 publishBtn.style.display = 'inline-block';
                 function tryAutoPublish(){
                   try{
