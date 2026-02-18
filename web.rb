@@ -6,6 +6,8 @@ require "tmpdir"
 require "securerandom"
 require "fileutils"
 require "openssl"
+require 'dotenv/load'
+require 'pg'
 
 require "webrick/https"
 require 'sidekiq'
@@ -93,6 +95,32 @@ server.mount_proc '/app.js' do |req, res|
     server.logger.error "ERR_SERVE_APPJS #{e.message}"
     res.status = 500
     res.body = ''
+  end
+end
+
+server.mount_proc '/db_health' do |req, res|
+  begin
+    db_url = ENV['DATABASE_URL']
+    if db_url.nil? || db_url.empty?
+      res.status = 500
+      res['Content-Type'] = 'application/json'
+      res.body =({ ok: false, error: 'DATABASE_URL is missing' }.to_json)
+      next
+    end
+
+    row = nil
+    PG.connect(db_url) do |conn|
+      row = conn.exec("SELECT current_database() AS db, current_user AS user_name, NOW() AS server_time").first
+    end
+
+    res.status = 200
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: true, db: row['db'], user: row['user_name'], server_time: row['server_time'] }.to_json)
+  rescue => e
+    server.logger.error "DB_HEALTH_ERR #{e.class}: #{e.message}"
+    res.status = 500
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: false, error: e.message }.to_json)
   end
 end
 

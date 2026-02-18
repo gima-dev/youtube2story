@@ -8,6 +8,7 @@ gem 'puma'
 gem 'dotenv'
 gem 'sidekiq'
 gem 'redis'
+gem 'pg'
 
 gem "rackup", "~> 2.3"
 

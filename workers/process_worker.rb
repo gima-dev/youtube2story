@@ -1,4 +1,5 @@
 require 'sidekiq'
+require 'dotenv/load'
 require 'open3'
 require 'json'
 require 'securerandom'
