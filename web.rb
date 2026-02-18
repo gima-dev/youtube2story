@@ -314,6 +314,45 @@ server.mount_proc '/user_state' do |req, res|
   end
 end
 
+server.mount_proc '/resume' do |req, res|
+  begin
+    source_url = req.query['url'].to_s
+    tg_user_id = normalize_tg_user_id(req.query['tg_user_id'])
+
+    base_check = '/check_publish?url=' + URI.encode_www_form_component(source_url)
+    base_check += '&tg_user_id=' + URI.encode_www_form_component(tg_user_id.to_s) if tg_user_id
+    target = base_check
+
+    if db_available? && tg_user_id && !source_url.empty?
+      with_db do |conn|
+        user_row = conn.exec_params(
+          'SELECT id, COALESCE(has_story_access, FALSE) AS has_story_access FROM users WHERE telegram_user_id = $1 LIMIT 1',
+          [tg_user_id]
+        ).first
+
+        if user_row
+          latest = find_latest_user_job(conn, user_row['id'].to_i, source_url)
+          if latest && latest['sidekiq_jid']
+            target = '/publish?job_id=' + URI.encode_www_form_component(latest['sidekiq_jid'])
+          elsif user_row['has_story_access'] == 't'
+            target = base_check + '&trusted=1'
+          end
+        end
+      end
+    end
+
+    res.status = 302
+    res['Location'] = target
+    res.body = ''
+  rescue => e
+    server.logger.error("RESUME_ERR #{e.class}: #{e.message}")
+    fallback = '/check_publish?url=' + URI.encode_www_form_component(req.query['url'].to_s)
+    res.status = 302
+    res['Location'] = fallback
+    res.body = ''
+  end
+end
+
 # Serve other static assets (outputs etc.) via file handler
 server.mount '/outputs', WEBrick::HTTPServlet::FileHandler, File.join(Dir.pwd, 'web_public', 'outputs')
 
@@ -638,12 +677,26 @@ server.mount_proc '/publish' do |req, res|
             color: var(--muted);
           }
 
+          .preview {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+          }
+
           .preview video {
-            width: 100%;
-            max-height: 70vh;
+            width: 280px;
+            height: 280px;
+            flex-shrink: 0;
             border-radius: 18px;
             background: #0c0c0c;
             box-shadow: 0 18px 40px rgba(17, 18, 16, 0.2);
+          }
+
+          .preview-controls {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
           }
 
           .note {
@@ -655,6 +708,21 @@ server.mount_proc '/publish' do |req, res|
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
+          }
+
+          @media (max-width: 680px) {
+            .preview {
+              flex-direction: column;
+              align-items: stretch;
+            }
+            .preview video {
+              width: 100%;
+              height: auto;
+              max-height: 320px;
+            }
+            .preview-controls {
+              flex: none;
+            }
           }
 
           .btn {
@@ -727,12 +795,14 @@ server.mount_proc '/publish' do |req, res|
             </div>
 
             <div id="preview" class="preview"></div>
-            <div id="note" class="note"></div>
 
-            <div class="actions">
-              <a id="downloadLink" class="btn ghost" href="#" style="display:none">Скачать видео</a>
-              <button id="copyLink" class="btn ghost" style="display:none">Скопировать ссылку</button>
-              <button id="publishBtn" class="btn primary" style="display:none">Открыть редактор историй</button>
+            <div class="preview-controls">
+              <div id="note" class="note"></div>
+              <div class="actions">
+                <a id="downloadLink" class="btn ghost" href="#" style="display:none">Скачать видео</a>
+                <button id="copyLink" class="btn ghost" style="display:none">Скопировать ссылку</button>
+                <button id="publishBtn" class="btn primary" style="display:none">Опубликовать</button>
+              </div>
             </div>
           </section>
 
@@ -789,7 +859,6 @@ server.mount_proc '/publish' do |req, res|
                 const src = '#{HOST}' + '/' + j.output;
                 previewEl.innerHTML = '<video controls playsinline src="'+src+'"></video>';
                 publishBtn.style.display = 'inline-block';
-                // Авто-вызов публикации в Telegram WebApp, если доступен
                 function tryAutoPublish(){
                   try{
                     if (window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.shareToStory === 'function'){
