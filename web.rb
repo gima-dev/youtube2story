@@ -185,29 +185,262 @@ server.mount_proc '/publish' do |req, res|
     # simple HTML page that shows processed video if ready
     html = <<~HTML
       <!doctype html>
-      <html>
+      <html lang="ru">
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>Publish Story</title>
-        <style>body{font-family:Helvetica,Arial,sans-serif;padding:16px}video{max-width:100%;height:auto}</style>
+        <title>Публикация истории</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:opsz@8..144&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+        <style>
+          :root {
+            --ink: #111210;
+            --muted: rgba(17, 18, 16, 0.7);
+            --paper: #f7f3ec;
+            --accent: #f65c37;
+            --accent-dark: #e14f2b;
+            --line: rgba(17, 18, 16, 0.12);
+          }
+
+          * { box-sizing: border-box; }
+
+          body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+            color: var(--ink);
+            background: radial-gradient(120% 120% at 10% 0%, #fde7d8 0%, var(--paper) 50%, #f5f1ea 100%);
+          }
+
+          body::before,
+          body::after {
+            content: "";
+            position: fixed;
+            width: 38vw;
+            height: 38vw;
+            max-width: 460px;
+            max-height: 460px;
+            border-radius: 50%;
+            opacity: 0.22;
+            z-index: 0;
+            pointer-events: none;
+            animation: drift 14s ease-in-out infinite;
+          }
+
+          body::before {
+            background: radial-gradient(circle, rgba(246, 92, 55, 0.5), rgba(246, 92, 55, 0));
+            top: -140px;
+            right: -140px;
+          }
+
+          body::after {
+            background: radial-gradient(circle, rgba(255, 196, 88, 0.45), rgba(255, 196, 88, 0));
+            bottom: -160px;
+            left: -140px;
+            animation-delay: -5s;
+          }
+
+          .shell {
+            position: relative;
+            z-index: 1;
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 46px 20px 64px;
+            display: grid;
+            gap: 24px;
+          }
+
+          .hero {
+            display: grid;
+            gap: 10px;
+            animation: rise 0.8s ease both;
+          }
+
+          .eyebrow {
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            font-size: 12px;
+            color: var(--muted);
+          }
+
+          h1 {
+            margin: 0;
+            font-family: "Instrument Serif", "Times New Roman", serif;
+            font-weight: 400;
+            font-size: clamp(28px, 4.6vw, 46px);
+            line-height: 1.05;
+          }
+
+          .hero p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 14px;
+            max-width: 560px;
+          }
+
+          .card {
+            background: rgba(255, 255, 255, 0.75);
+            border: 1px solid var(--line);
+            border-radius: 24px;
+            padding: 24px;
+            display: grid;
+            gap: 16px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 20px 60px rgba(17, 18, 16, 0.08);
+            animation: rise 0.8s ease both;
+            animation-delay: 0.1s;
+          }
+
+          .status-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+          }
+
+          .label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+            color: var(--muted);
+          }
+
+          #status {
+            font-size: 20px;
+            font-weight: 600;
+            margin-top: 6px;
+          }
+
+          .job-id {
+            font-size: 12px;
+            color: var(--muted);
+          }
+
+          #progressWrap {
+            display: none;
+          }
+
+          .progress-track {
+            height: 10px;
+            background: rgba(17, 18, 16, 0.08);
+            border-radius: 999px;
+            overflow: hidden;
+          }
+
+          .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #f65c37, #ff9448);
+          }
+
+          .progress-text {
+            margin-top: 8px;
+            font-size: 13px;
+            color: var(--muted);
+          }
+
+          .preview video {
+            width: 100%;
+            max-height: 70vh;
+            border-radius: 18px;
+            background: #0c0c0c;
+            box-shadow: 0 18px 40px rgba(17, 18, 16, 0.2);
+          }
+
+          .note {
+            color: var(--muted);
+            font-size: 13px;
+          }
+
+          .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+          }
+
+          .btn {
+            border-radius: 999px;
+            padding: 11px 18px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid transparent;
+            font-family: inherit;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+          }
+
+          .btn.primary {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 16px 30px rgba(246, 92, 55, 0.25);
+          }
+
+          .btn.primary:hover {
+            background: var(--accent-dark);
+            transform: translateY(-1px);
+          }
+
+          .btn.ghost {
+            background: transparent;
+            border-color: var(--line);
+            color: var(--ink);
+          }
+
+          .foot {
+            font-size: 12px;
+            color: var(--muted);
+          }
+
+          @keyframes rise {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+
+          @keyframes drift {
+            0%, 100% { transform: translate(0, 0); }
+            50% { transform: translate(-14px, 10px); }
+          }
+        </style>
         <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
       </head>
       <body>
-        <h3>Publish Story</h3>
-        <div id="status">Loading...</div>
-        <div id="jobId" style="margin-top:6px;color:#666;font-size:0.9em"></div>
-        <div id="progressWrap" style="margin-top:12px;display:none">
-          <div style="height:8px;background:#eee;border-radius:999px;overflow:hidden">
-            <div id="progressBar" style="height:8px;width:0%;background:#3b82f6"></div>
-          </div>
-          <div id="progressText" style="margin-top:6px;color:#666;font-size:0.9em"></div>
-        </div>
-        <div id="preview"></div>
-        <div id="note" style="color:#666;margin-top:12px"></div>
-        <a id="downloadLink" href="#" style="display:none;margin-top:8px;display:inline-block">Скачать видео</a>
-        <button id="copyLink" style="display:none;margin-left:8px">Скопировать ссылку</button>
-        <button id="publishBtn" style="display:none;margin-left:8px">Опубликовать историю</button>
+        <main class="shell">
+          <header class="hero">
+            <div class="eyebrow">YouTube to Story</div>
+            <h1>История готовится</h1>
+            <p>Мы проверим статус обработки и откроем редактор в Telegram, когда файл будет готов.</p>
+          </header>
+
+          <section class="card">
+            <div class="status-row">
+              <div>
+                <div class="label">Статус</div>
+                <div id="status">Загрузка...</div>
+              </div>
+              <div id="jobId" class="job-id"></div>
+            </div>
+
+            <div id="progressWrap" class="progress">
+              <div class="progress-track">
+                <div id="progressBar" class="progress-bar"></div>
+              </div>
+              <div id="progressText" class="progress-text"></div>
+            </div>
+
+            <div id="preview" class="preview"></div>
+            <div id="note" class="note"></div>
+
+            <div class="actions">
+              <a id="downloadLink" class="btn ghost" href="#" style="display:none">Скачать видео</a>
+              <button id="copyLink" class="btn ghost" style="display:none">Скопировать ссылку</button>
+              <button id="publishBtn" class="btn primary" style="display:none">Открыть редактор историй</button>
+            </div>
+          </section>
+
+          <div class="foot">Если редактор не открылся автоматически, нажмите кнопку вручную.</div>
+        </main>
         <script>
           const jobId = "#{job_id}";
           const statusEl = document.getElementById('status');

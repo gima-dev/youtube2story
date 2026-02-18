@@ -5,14 +5,109 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Youtube2story</title>
   <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
+  <style>
+    :root{
+      --bg1:#f7f2ea;
+      --bg2:#e9f0ff;
+      --ink:#1c1c1c;
+      --muted:#5a6370;
+      --card:#ffffff;
+      --accent:#2f7dff;
+      --accent-soft:#e7f0ff;
+      --warn:#ffb84d;
+      --ok:#22c55e;
+      --shadow:0 10px 40px rgba(26,38,64,0.08);
+      --radius:16px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: "Georgia", "Times New Roman", serif;
+      color:var(--ink);
+      background:
+        radial-gradient(900px 500px at 10% -10%, var(--bg2), transparent 60%),
+        radial-gradient(700px 400px at 100% 0%, #fce7c7, transparent 55%),
+        linear-gradient(180deg, var(--bg1), #fff);
+      min-height:100vh;
+      padding:20px 16px 28px;
+    }
+    .wrap{max-width:560px;margin:0 auto}
+    .hero{
+      background:var(--card);
+      border-radius:var(--radius);
+      padding:16px 18px;
+      box-shadow:var(--shadow);
+      border:1px solid #eef1f6;
+      position:relative;
+      overflow:hidden;
+    }
+    .hero::after{
+      content:"";
+      position:absolute;
+      right:-40px;top:-30px;
+      width:140px;height:140px;
+      background:var(--accent-soft);
+      border-radius:50%;
+      opacity:0.8;
+    }
+    .brand{
+      font-weight:700;
+      letter-spacing:0.2px;
+      font-size:20px;
+      display:flex;gap:10px;align-items:center;
+    }
+    .brand-badge{
+      width:10px;height:10px;border-radius:50%;
+      background:var(--accent);
+      box-shadow:0 0 0 6px rgba(47,125,255,0.12);
+      flex:0 0 auto;
+    }
+    .sub{
+      color:var(--muted);
+      margin-top:6px;
+      font-size:14px;
+      line-height:1.35;
+      font-family:"Helvetica", "Arial", sans-serif;
+    }
+    .card{
+      margin-top:14px;
+      background:var(--card);
+      border-radius:var(--radius);
+      padding:14px 16px;
+      border:1px solid #eef1f6;
+      box-shadow:var(--shadow);
+      font-family:"Helvetica", "Arial", sans-serif;
+    }
+    .status{
+      font-size:16px;
+      font-weight:600;
+      margin-bottom:6px;
+    }
+    .hint{color:var(--muted);font-size:13px;line-height:1.35}
+    .pill{
+      display:inline-flex;align-items:center;gap:8px;
+      font-size:12px;color:#6d5f3b;
+      background:#fff6df;border:1px solid #ffe3a6;
+      padding:6px 10px;border-radius:999px;margin-top:12px;
+      font-family:"Helvetica", "Arial", sans-serif;
+    }
+    .dot{
+      width:6px;height:6px;border-radius:50%;background:var(--warn);
+    }
+  </style>
 </head>
 <body>
-  <div style="padding:12px;background:#f3f8ff;border:1px solid #cfe3ff;border-radius:8px;margin-bottom:12px">
-    <strong>Youtube2story</strong>
-    <div style="color:#4a5a6a;margin-top:6px">Проверяем возможность публикации в Stories.</div>
+  <div class="wrap">
+    <div class="hero">
+      <div class="brand"><span class="brand-badge"></span>Youtube2story</div>
+      <div class="sub">Проверяем возможность публикации в Stories и сразу запускаем обработку.</div>
+      <div class="pill"><span class="dot"></span>Открывайте через кнопку в чате бота</div>
+    </div>
+    <div class="card">
+      <div id="status" class="status">Проверка прав публикации...</div>
+      <div id="hint" class="hint"></div>
+    </div>
   </div>
-  <div id="status" style="padding:12px;border-radius:8px;background:#f6f6f6;color:#333">Проверка прав публикации...</div>
-  <div id="hint" style="margin-top:10px;color:#666;font-size:14px"></div>
   <script>
     (function(){
       function qs(key){
