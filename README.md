@@ -41,6 +41,7 @@ bundle install
 TELEGRAM_BOT_TOKEN=ваш_токен
 WEBAPP_URL=https://gima.dedyn.io/app
 WEBAPP_HOST=https://gima.dedyn.io
+DATABASE_URL=postgresql://y2s_app:пароль@127.0.0.1:5432/youtube2story
 ```
 
 3) Запустите веб‑сервер (нужен корректный SSL/сертификат для хоста):
@@ -52,6 +53,13 @@ ruby web.rb
 ```bash
 ruby bot.rb
 ```
+
+5) Проверка подключения приложения к Postgres:
+```bash
+curl -sS http://127.0.0.1:8080/db_health
+```
+
+Ожидаемый ответ: JSON с `ok: true`, именем БД и пользователем.
 
 Дальнейшие шаги:
 - реализовать реальную обработку в `/process` (yt-dlp + ffmpeg), сохранять результат в публичную директорию `web_public/outputs/` или S3 и возвращать URL
