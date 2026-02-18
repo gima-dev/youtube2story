@@ -784,7 +784,6 @@ server.mount_proc '/publish' do |req, res|
                 <div class="label">Статус</div>
                 <div id="status">Загрузка...</div>
               </div>
-              <div id="jobId" class="job-id"></div>
             </div>
 
             <div id="progressWrap" class="progress">
@@ -812,7 +811,6 @@ server.mount_proc '/publish' do |req, res|
           const jobId = "#{job_id}";
           const statusEl = document.getElementById('status');
           const previewEl = document.getElementById('preview');
-          const jobIdEl = document.getElementById('jobId');
           const publishBtn = document.getElementById('publishBtn');
           const progressWrap = document.getElementById('progressWrap');
           const progressBar = document.getElementById('progressBar');
@@ -820,10 +818,6 @@ server.mount_proc '/publish' do |req, res|
           let progressPct = 0;
           let startedAt = Date.now();
           let videoUrl = null;
-
-          if (jobId) {
-            jobIdEl.innerText = 'Job ID: ' + jobId;
-          }
 
           try {
             if (window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.ready === 'function') {
@@ -859,8 +853,7 @@ server.mount_proc '/publish' do |req, res|
                 updateProgress(true, 100, 'done');
                 const src = '#{HOST}' + '/' + j.output;
                 videoUrl = src;
-                const posterSrc = src.replace(/\.[^.]+$/, '.jpg');
-                previewEl.innerHTML = '<img src="'+posterSrc+'" alt="preview" style="width:100%;border-radius:18px;background:#0c0c0c">';
+                previewEl.innerHTML = '';
                 publishBtn.style.display = 'inline-block';
                 function tryAutoPublish(){
                   try{
