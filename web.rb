@@ -925,30 +925,43 @@ server.mount_proc "/admin/reset_user" do |req, res|
     body_str = req.body.to_s
     data = JSON.parse(body_str) if body_str.length > 0
     tg_user_id = data && data['tg_user_id'] ? normalize_tg_user_id(data['tg_user_id']) : nil
+    username = data && data['username'] ? data['username'].to_s.strip.downcase : nil
+    username = username[1..] if username && username.start_with?('@')
+    username = nil if username && username.empty?
 
-    if tg_user_id.nil?
+    if tg_user_id.nil? && username.nil?
       res.status = 400
       res['Content-Type'] = 'application/json'
-      res.body =({ ok: false, error: 'missing tg_user_id' }.to_json)
+      res.body =({ ok: false, error: 'missing tg_user_id or username' }.to_json)
       next
     end
 
     if db_available?
       with_db do |conn|
-        # Fetch user ID
-        user_row = conn.exec_params(
-          'SELECT id FROM users WHERE telegram_user_id = $1 LIMIT 1',
-          [tg_user_id]
-        ).first
+        # Fetch user by tg_user_id or username
+        user_row = if tg_user_id
+          conn.exec_params(
+            'SELECT id, telegram_user_id, username FROM users WHERE telegram_user_id = $1 LIMIT 1',
+            [tg_user_id]
+          ).first
+        else
+          conn.exec_params(
+            'SELECT id, telegram_user_id, username FROM users WHERE LOWER(username) = $1 LIMIT 1',
+            [username]
+          ).first
+        end
 
         unless user_row
           res.status = 404
           res['Content-Type'] = 'application/json'
-          res.body =({ ok: false, error: 'user not found' }.to_json)
+          target = tg_user_id ? "tg_user_id=#{tg_user_id}" : "username=#{username}"
+          res.body =({ ok: false, error: "user not found (#{target})" }.to_json)
           next
         end
 
         user_id = user_row['id'].to_i
+        effective_tg_user_id = user_row['telegram_user_id']
+        effective_username = user_row['username']
 
         # Get all artifact paths for this user to delete files
         artifact_rows = conn.exec_params(
@@ -988,7 +1001,7 @@ server.mount_proc "/admin/reset_user" do |req, res|
           end
         end
 
-        server.logger.info("Reset user data: tg_user_id=#{tg_user_id}, user_id=#{user_id}")
+        server.logger.info("Reset user data: tg_user_id=#{effective_tg_user_id}, username=#{effective_username}, user_id=#{user_id}")
       end
     end
 

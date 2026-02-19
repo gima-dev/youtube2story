@@ -5,7 +5,7 @@ require 'net/http'
 require 'json'
 require 'uri'
 
-TOKEN = ENV['TELEGRAM_TOKEN'] || ENV['BOT_TOKEN']
+TOKEN = ENV['TELEGRAM_BOT_TOKEN'] || ENV['TELEGRAM_TOKEN'] || ENV['BOT_TOKEN']
 WEBAPP_ORIGIN = ENV['WEBAPP_ORIGIN'] || 'https://youtube.gimadev.win'
 
 raise 'Missing TELEGRAM token' unless TOKEN
@@ -73,30 +73,8 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
         $stderr.sync = true
         bot.api.send_message(chat_id: chat_id, text: "Вставьте ссылку YouTube сюда или откройте редактор через кнопку.")
 
-      when '/reset'
-        # Developer command - reset all user data
-        tg_user_id = message.from && message.from.id
-        begin
-          uri = URI.parse(WEBAPP_ORIGIN + '/admin/reset_user')
-          req = Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json')
-          req.body = { tg_user_id: tg_user_id }.to_json
-          res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
-            http.request(req)
-          end
-          if res.is_a?(Net::HTTPSuccess)
-            body = JSON.parse(res.body) rescue {}
-            if body['ok']
-              bot.api.send_message(chat_id: chat_id, text: "✅ Все данные пользователя удалены, БД очищена, файлы удалены. Пользователь остался в таблице users.")
-            else
-              bot.api.send_message(chat_id: chat_id, text: "❌ Ошибка: #{body['error']}")
-            end
-          else
-            bot.api.send_message(chat_id: chat_id, text: "❌ Ошибка сервера при сбросе данных (#{res.code})")
-          end
-        rescue => e
-          puts "Ошибка при сбросе данных: #{e.class}: #{e}"
-          bot.api.send_message(chat_id: chat_id, text: "❌ Ошибка при сбросе: #{e.message}")
-        end
+      when %r{\A/reset\b}i
+        bot.api.send_message(chat_id: chat_id, text: 'Команда reset выполняется только через CLI (clamp).')
 
       when /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i
         puts "📨 Получена YouTube ссылка от #{message.from && message.from.first_name}: #{text}"

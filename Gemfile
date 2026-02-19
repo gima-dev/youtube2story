@@ -9,6 +9,7 @@ gem 'dotenv'
 gem 'sidekiq'
 gem 'redis'
 gem 'pg'
+gem 'clamp'
 
 gem "rackup", "~> 2.3"
 

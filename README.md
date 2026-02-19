@@ -80,6 +80,24 @@ psql -d youtube2story -f db/schema.sql
 
 ## Команды
 
+### CLI (Clamp)
+
+Сброс данных пользователя выполняется только через CLI-команду (не через Telegram-бота):
+
+```bash
+ruby scripts/y2s_cli.rb reset-user --tg-user-id 123456789
+```
+
+```bash
+ruby scripts/y2s_cli.rb reset-user --username someuser
+```
+
+Проверить доступные подкоманды:
+
+```bash
+ruby scripts/y2s_cli.rb --help
+```
+
 - Посмотреть статус Monit для `y2s_web`:
 ```bash
 sudo monit status y2s_web
