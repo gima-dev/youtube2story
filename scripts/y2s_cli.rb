@@ -54,7 +54,7 @@ module Y2S
       })
 
       if menu_result['ok']
-        puts '✅ Menu button set to show commands'
+        puts '✅ Menu button set to Commands'
       else
         puts "⚠️ Menu button warning: #{menu_result['description']}"
       end
@@ -72,8 +72,7 @@ module Y2S
       })
 
       if commands_result['ok']
-        puts '✅ Commands registered successfully!'
-        puts '   Available: /start'
+        puts '✅ Commands available: /start'
       else
         raise "Failed to register commands: #{commands_result['description']}"
       end

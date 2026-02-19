@@ -116,6 +116,7 @@
       }
       const sourceUrl = qs('url') || null;
       const tgUserIdFromQuery = qs('tg_user_id');
+      const trustedFromQuery = qs('trusted') === '1';
       const statusEl = document.getElementById('status');
       const hintEl = document.getElementById('hint');
 
@@ -206,6 +207,12 @@
 
         if(typeof Telegram.WebApp.ready === 'function'){
           try{ Telegram.WebApp.ready(); }catch(e){}
+        }
+
+        if(trustedFromQuery){
+          setStatus('Права уже подтверждены.', 'Используем сохраненное разрешение и запускаем обработку.');
+          startProcessing(tgProfile, true);
+          return;
         }
 
         function runCapabilityCheck(){
