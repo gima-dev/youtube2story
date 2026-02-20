@@ -240,8 +240,10 @@
         return;
       }
 
+
       if (jobId) {
         showContent();
+        // Тест: обновить статус через 2 секунды
         check();
         return;
       }
@@ -417,7 +419,25 @@
       noteEl.innerText = 'Частей: ' + normalized.length + ' · готово: ' + readyCount;
     }
 
+    async function attachBotMessageIfNeeded() {
+      const chatId = publishConfig.chatIdFromQuery;
+      const messageId = publishConfig.messageIdFromQuery;
+      if (jobId && chatId && messageId) {
+        try {
+          const resp = await fetch('/admin/attach_bot_message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id: jobId, chat_id: chatId, message_id: messageId })
+          });
+          // Можно добавить логирование или обработку ответа при необходимости
+        } catch (e) {
+          console.error('attach_bot_message failed', e);
+        }
+      }
+    }
+
     function check() {
+      attachBotMessageIfNeeded();
       fetch('/job_status?job_id=' + encodeURIComponent(jobId)).then(r=>r.json()).then(j=>{
         // Всегда синхронизируем startedAt, если сервер вернул started_at
         if (j.started_at) {
