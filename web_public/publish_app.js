@@ -16,8 +16,33 @@
     const progressText = document.getElementById('progressText');
     let gateFailsafeTimer = null;
     let progressPct = 0;
-    let startedAt = Date.now();
+    let startedAt = null;
     let startedAtSynced = false;
+    function getStartedAtKey(jobId) {
+      return 'y2s_startedAt_' + (jobId || '');
+    }
+    function loadStartedAt(jobId) {
+      const key = getStartedAtKey(jobId);
+      const val = localStorage.getItem(key);
+      if (val && !isNaN(Number(val))) return Number(val);
+      return null;
+    }
+    function saveStartedAt(jobId, value) {
+      const key = getStartedAtKey(jobId);
+      if (value && !isNaN(Number(value))) {
+        localStorage.setItem(key, String(value));
+      }
+    }
+    function clearStartedAt(jobId) {
+      const key = getStartedAtKey(jobId);
+      localStorage.removeItem(key);
+    }
+    // Инициализация startedAt из localStorage, если есть jobId
+    if (jobId) {
+      startedAt = loadStartedAt(jobId) || Date.now();
+    } else {
+      startedAt = Date.now();
+    }
     let lastPartsSignature = null;
 
     try {
@@ -100,6 +125,8 @@
     }
 
     function startProcessing(tgProfile){
+      // Новый jobId — сбросить startedAt
+      if (jobId) clearStartedAt(jobId);
       try {
         if (!sourceUrl) {
           showDenied('Не найдена ссылка на YouTube.');
@@ -156,6 +183,8 @@
             }
 
             jobId = String(nextJobId);
+            startedAt = Date.now();
+            saveStartedAt(jobId, startedAt);
             showContent();
             check();
           })
@@ -256,6 +285,8 @@
         progressPct = Math.min(progressPct + 7, 90);
       }
       progressBar.style.width = progressPct + '%';
+      // startedAt всегда должен быть определён
+      if (!startedAt) startedAt = Date.now();
       const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
       const stageText = topStageLabel(stage, done);
       progressText.innerText = stageText + ' · ' + progressPct + '% (' + elapsed + 's)';
@@ -388,11 +419,13 @@
 
     function check() {
       fetch('/job_status?job_id=' + encodeURIComponent(jobId)).then(r=>r.json()).then(j=>{
-        if (!startedAtSynced && j.started_at) {
+        // Всегда синхронизируем startedAt, если сервер вернул started_at
+        if (j.started_at) {
           const parsedStartedAt = Date.parse(j.started_at);
           if (!Number.isNaN(parsedStartedAt)) {
             startedAt = parsedStartedAt;
             startedAtSynced = true;
+            if (jobId) saveStartedAt(jobId, startedAt);
           }
         }
         renderParts(j.parts, j.video_id, j.output);
