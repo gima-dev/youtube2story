@@ -231,6 +231,24 @@ server.mount_proc '/app.js' do |req, res|
   end
 end
 
+server.mount_proc '/publish_app.js' do |req, res|
+  begin
+    server.logger.info "REQ /publish_app.js from #{req.remote_ip} headers=#{req.header.inspect}"
+    path = File.join(Dir.pwd, 'web_public', 'publish_app.js')
+    body = File.read(path)
+    res.status = 200
+    res['Content-Type'] = 'application/javascript'
+    res['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    res['Pragma'] = 'no-cache'
+    res['Expires'] = '0'
+    res.body = body
+  rescue => e
+    server.logger.error "ERR_SERVE_PUBLISH_APPJS #{e.message}"
+    res.status = 500
+    res.body = ''
+  end
+end
+
 server.mount_proc '/health' do |req, res|
   begin
     res.status = 200
@@ -319,9 +337,8 @@ server.mount_proc '/resume' do |req, res|
     source_url = req.query['url'].to_s
     tg_user_id = normalize_tg_user_id(req.query['tg_user_id'])
 
-    base_check = '/check_publish?url=' + URI.encode_www_form_component(source_url)
-    base_check += '&tg_user_id=' + URI.encode_www_form_component(tg_user_id.to_s) if tg_user_id
-    target = base_check
+    target = '/publish?url=' + URI.encode_www_form_component(source_url)
+    target += '&tg_user_id=' + URI.encode_www_form_component(tg_user_id.to_s) if tg_user_id
 
     if db_available? && tg_user_id && !source_url.empty?
       with_db do |conn|
@@ -334,8 +351,6 @@ server.mount_proc '/resume' do |req, res|
           latest = find_latest_user_job(conn, user_row['id'].to_i, source_url)
           if latest && latest['sidekiq_jid']
             target = '/publish?job_id=' + URI.encode_www_form_component(latest['sidekiq_jid'])
-          elsif user_row['has_story_access'] == 't'
-            target = base_check + '&trusted=1'
           end
         end
       end
@@ -346,7 +361,7 @@ server.mount_proc '/resume' do |req, res|
     res.body = ''
   rescue => e
     server.logger.error("RESUME_ERR #{e.class}: #{e.message}")
-    fallback = '/check_publish?url=' + URI.encode_www_form_component(req.query['url'].to_s)
+    fallback = '/publish?url=' + URI.encode_www_form_component(req.query['url'].to_s)
     res.status = 302
     res['Location'] = fallback
     res.body = ''
@@ -363,6 +378,130 @@ end
 def run_cmd(cmd, timeout: 3600)
   stdout, stderr, status = Open3.capture3(*cmd)
   return { ok: status.success?, out: stdout, err: stderr, status: status.exitstatus }
+end
+
+def parse_iso8601_duration(iso_duration)
+  return nil unless iso_duration && iso_duration.start_with?('PT')
+
+  # Parse ISO 8601 duration like PT4M13S or PT1H2M3S
+  duration_str = iso_duration[2..-1] # Remove PT prefix
+  hours = 0
+  minutes = 0
+  seconds = 0
+
+  if duration_str =~ /(\d+)H/
+    hours = $1.to_i
+    duration_str = duration_str.sub(/\d+H/, '')
+  end
+
+  if duration_str =~ /(\d+)M/
+    minutes = $1.to_i
+    duration_str = duration_str.sub(/\d+M/, '')
+  end
+
+  if duration_str =~ /(\d+(?:\.\d+)?)S/
+    seconds = $1.to_f
+  end
+
+  total = hours * 3600 + minutes * 60 + seconds
+  total > 0 ? total : nil
+rescue => e
+  server.logger.warn("parse_iso8601_duration failed: #{e}")
+  nil
+end
+
+def probe_youtube_duration_via_api(video_id)
+  api_key = ENV['YOUTUBE_API_KEY']
+  return nil unless api_key && !api_key.empty?
+
+  uri = URI("https://www.googleapis.com/youtube/v3/videos?id=#{video_id}&part=contentDetails&key=#{api_key}")
+  response = Net::HTTP.get_response(uri)
+  return nil unless response.is_a?(Net::HTTPSuccess)
+
+  data = JSON.parse(response.body)
+  return nil unless data['items'] && data['items'].any?
+
+  iso_duration = data.dig('items', 0, 'contentDetails', 'duration')
+  parse_iso8601_duration(iso_duration)
+rescue => e
+  server.logger.warn("probe_youtube_duration_via_api failed: #{e}")
+  nil
+end
+
+def probe_youtube_duration_yt_dlp(youtube_url)
+  return nil unless command_exists?('yt-dlp')
+
+  cmd = ['yt-dlp', '--no-playlist', '--skip-download', '--print', 'duration', youtube_url]
+  stdout, _stderr, status = Open3.capture3(*cmd)
+  return nil unless status && status.success?
+
+  line = stdout.to_s.each_line.map(&:strip).find { |value| !value.empty? }
+  return nil unless line
+
+  duration = line.to_f
+  return nil unless duration.positive?
+
+  duration
+rescue => e
+  server.logger.warn("probe_youtube_duration_yt_dlp failed: #{e}")
+  nil
+end
+
+def probe_youtube_duration(youtube_url)
+  video_id = extract_youtube_id(youtube_url)
+  
+  # Try API first (faster and more reliable)
+  if video_id
+    duration = probe_youtube_duration_via_api(video_id)
+    return duration if duration
+  end
+
+  # Fallback to yt-dlp
+  probe_youtube_duration_yt_dlp(youtube_url)
+end
+
+def extract_youtube_id(url)
+  case url
+  when /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+    $1
+  when /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/
+    $1
+  else
+    nil
+  end
+end
+
+def build_segments_from_duration(detected_duration, segment_length)
+  segments = []
+
+  if detected_duration && detected_duration > 0
+    cursor = 0.0
+    index = 1
+    while cursor < detected_duration
+      duration_sec = [segment_length, detected_duration - cursor].min
+      segments << {
+        'index' => index,
+        'start_sec' => cursor.round(3),
+        'duration_sec' => duration_sec.round(3),
+        'status' => 'queued',
+        'progress' => 0
+      }
+      cursor += segment_length
+      index += 1
+    end
+  end
+
+  if segments.empty?
+    segments << {
+      'index' => 1,
+      'start_sec' => 0.0,
+      'duration_sec' => segment_length,
+      'status' => 'queued',
+      'progress' => 0
+    }
+  end
+
+  segments
 end
 
 server.mount_proc "/process" do |req, res|
@@ -388,6 +527,13 @@ server.mount_proc "/process" do |req, res|
       res.status = 400
       res['Content-Type'] = 'application/json'
       res.body =({ error: 'invalid url' }.to_json)
+      next
+    end
+
+    unless can_share == true
+      res.status = 403
+      res['Content-Type'] = 'application/json'
+      res.body =({ error: 'story publish permission required' }.to_json)
       next
     end
 
@@ -422,6 +568,18 @@ server.mount_proc "/process" do |req, res|
 
     jid = ProcessWorker.perform_async(youtube_url, tg_user_id)
 
+    # Probe video duration and pre-compute parts before job starts
+    prefetched_duration = probe_youtube_duration(youtube_url)
+    video_id = extract_youtube_id(youtube_url)
+    segment_length = ENV['STORY_MAX_SECONDS'].to_i
+    segment_length = 60 if segment_length <= 0
+    segments = build_segments_from_duration(prefetched_duration, segment_length.to_f)
+
+    initial_metadata = {}
+    initial_metadata['parts'] = JSON.generate(segments) if segments && segments.any?
+    initial_metadata['video_id'] = video_id if video_id
+    metadata_json = JSON.generate(initial_metadata)
+
     if db_available?
       begin
         with_db do |conn|
@@ -430,11 +588,11 @@ server.mount_proc "/process" do |req, res|
             conn.exec_params(
               <<~SQL,
                 INSERT INTO jobs (user_id, sidekiq_jid, source_url, status, stage, progress_percent, metadata, created_at, updated_at)
-                VALUES ($1, $2, $3, 'queued', 'queued', 0, '{}'::jsonb, NOW(), NOW())
+                VALUES ($1, $2, $3, 'queued', 'queued', 0, $4::jsonb, NOW(), NOW())
                 ON CONFLICT (sidekiq_jid)
                 DO NOTHING
               SQL
-              [user_id, jid, youtube_url]
+              [user_id, jid, youtube_url, metadata_json]
             )
           end
         end
@@ -468,19 +626,28 @@ server.mount_proc "/job_status" do |req, res|
         db_row = nil
         with_db do |conn|
           db_row = conn.exec_params(
-            "SELECT status, progress_percent, stage, metadata->>'output' AS output, metadata->>'video_id' AS video_id, error_message FROM jobs WHERE sidekiq_jid = $1 LIMIT 1",
+            "SELECT status, progress_percent, stage, metadata->>'output' AS output, metadata->>'video_id' AS video_id, metadata->>'parts' AS parts, error_message, started_at FROM jobs WHERE sidekiq_jid = $1 LIMIT 1",
             [job_id]
           ).first
         end
 
         if db_row
+          parts = nil
+          begin
+            parts = JSON.parse(db_row['parts']) if db_row['parts']
+          rescue
+            parts = nil
+          end
+
           payload = {
             status: db_row['status'],
             progress: db_row['progress_percent']&.to_i,
             stage: db_row['stage'],
             output: db_row['output'],
             video_id: db_row['video_id'],
-            error: db_row['error_message']
+            parts: parts,
+            error: db_row['error_message'],
+            started_at: db_row['started_at']
           }
           payload[:progress] = 100 if payload[:status] == 'done'
           res.status = 200
@@ -507,6 +674,14 @@ end
 server.mount_proc '/publish' do |req, res|
   begin
     job_id = req.query['job_id']
+    source_url = req.query['url'].to_s
+    tg_user_id = normalize_tg_user_id(req.query['tg_user_id'])
+    trusted = req.query['trusted'].to_s == '1'
+
+    job_id_js = (job_id || '').to_json
+    source_url_js = source_url.to_json
+    tg_user_id_js = (tg_user_id || '').to_json
+    trusted_js = trusted.to_json
     # simple HTML page that shows processed video if ready
     html = <<~HTML
       <!doctype html>
@@ -667,18 +842,65 @@ server.mount_proc '/publish' do |req, res|
           }
 
           .preview {
-            display: flex;
-            align-items: center;
-            gap: 16px;
+            display: block;
           }
 
-          .preview video {
-            width: 280px;
-            height: 280px;
-            flex-shrink: 0;
-            border-radius: 18px;
+          .part-list {
+            display: grid;
+            gap: 14px;
+          }
+
+          .part-card {
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 12px;
+            background: rgba(255,255,255,0.8);
+            display: grid;
+            gap: 10px;
+          }
+
+          .part-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+          }
+
+          .part-title {
+            font-size: 14px;
+            font-weight: 600;
+          }
+
+          .part-status {
+            font-size: 12px;
+            color: var(--muted);
+          }
+
+          .part-video {
+            width: 100%;
+            border-radius: 14px;
             background: #0c0c0c;
-            box-shadow: 0 18px 40px rgba(17, 18, 16, 0.2);
+            max-height: 320px;
+            object-fit: cover;
+          }
+
+          .part-progress-track {
+            height: 8px;
+            background: rgba(17, 18, 16, 0.08);
+            border-radius: 999px;
+            overflow: hidden;
+          }
+
+          .part-progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #f65c37, #ff9448);
+          }
+
+          .part-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
           }
 
           .preview-controls {
@@ -703,11 +925,6 @@ server.mount_proc '/publish' do |req, res|
             .preview {
               flex-direction: column;
               align-items: stretch;
-            }
-            .preview video {
-              width: 100%;
-              height: auto;
-              max-height: 320px;
             }
             .preview-controls {
               flex: none;
@@ -747,6 +964,45 @@ server.mount_proc '/publish' do |req, res|
             color: var(--muted);
           }
 
+          .gate-wrap {
+            min-height: 180px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            text-align: center;
+          }
+
+          .spinner {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            border: 3px solid rgba(246, 92, 55, 0.18);
+            border-top-color: var(--accent);
+            animation: spin 0.8s linear infinite;
+          }
+
+          .gate-text {
+            font-size: 14px;
+            color: var(--muted);
+          }
+
+          .denied-wrap {
+            min-height: 180px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-size: 16px;
+            font-weight: 600;
+            color: #c65b5b;
+          }
+
+          #publishContent {
+            display: none;
+          }
+
           @keyframes rise {
             from { opacity: 0; transform: translateY(12px); }
             to { opacity: 1; transform: translateY(0); }
@@ -756,69 +1012,287 @@ server.mount_proc '/publish' do |req, res|
             0%, 100% { transform: translate(0, 0); }
             50% { transform: translate(-14px, 10px); }
           }
+
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
         </style>
         <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
       </head>
       <body>
         <main class="shell">
-          <header class="hero">
-            <div class="eyebrow">YouTube to Story</div>
-            <h1>История готовится</h1>
-            <p>Мы проверим статус обработки и откроем редактор в Telegram, когда файл будет готов.</p>
-          </header>
-
           <section class="card">
-            <div class="status-row">
-              <div>
-                <div class="label">Статус</div>
-                <div id="status">Загрузка...</div>
-              </div>
+            <div id="gateWrap" class="gate-wrap">
+              <div class="spinner"></div>
+              <div id="gateText" class="gate-text">Загрузка</div>
             </div>
 
-            <div id="progressWrap" class="progress">
-              <div class="progress-track">
-                <div id="progressBar" class="progress-bar"></div>
+            <div id="denyWrap" class="denied-wrap"></div>
+
+            <div id="publishContent">
+              <div class="status-row">
+                <div>
+                  <div id="status">Загрузка...</div>
+                </div>
               </div>
-              <div id="progressText" class="progress-text"></div>
-            </div>
 
-            <div id="preview" class="preview"></div>
+              <div id="progressWrap" class="progress">
+                <div class="progress-track">
+                  <div id="progressBar" class="progress-bar"></div>
+                </div>
+                <div id="progressText" class="progress-text"></div>
+              </div>
 
-            <div class="preview-controls">
+              <div id="preview" class="preview"></div>
               <div id="note" class="note"></div>
-              <div class="actions">
-                <a id="downloadLink" class="btn ghost" href="#" style="display:none">Скачать видео</a>
-                <button id="copyLink" class="btn ghost" style="display:none">Скопировать ссылку</button>
-                <button id="publishBtn" class="btn primary" style="display:none">Опубликовать</button>
-              </div>
             </div>
           </section>
-
-          <div class="foot">Если редактор не открылся автоматически, нажмите кнопку вручную.</div>
         </main>
-        <script>
-          const jobId = "#{job_id}";
+        <script type="text/plain" id="publish-inline-legacy">
+          let jobId = #{job_id_js};
+          const sourceUrl = #{source_url_js};
+          const tgUserIdFromQuery = #{tg_user_id_js};
+          const trustedFromQuery = #{trusted_js};
+          const host = "#{HOST}";
+          const gateWrapEl = document.getElementById('gateWrap');
+          const gateTextEl = document.getElementById('gateText');
+          const denyWrapEl = document.getElementById('denyWrap');
+          const publishContentEl = document.getElementById('publishContent');
           const statusEl = document.getElementById('status');
           const previewEl = document.getElementById('preview');
-          const publishBtn = document.getElementById('publishBtn');
+          const noteEl = document.getElementById('note');
           const progressWrap = document.getElementById('progressWrap');
           const progressBar = document.getElementById('progressBar');
           const progressText = document.getElementById('progressText');
+          let gateFailsafeTimer = null;
           let progressPct = 0;
           let startedAt = Date.now();
-          let videoUrl = null;
+          let startedAtSynced = false;
+          let lastPartsSignature = null;
 
           try {
-            if (window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.ready === 'function') {
-              Telegram.WebApp.ready();
-              if (typeof Telegram.WebApp.expand === 'function') {
-                Telegram.WebApp.expand();
+            if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.ready === 'function') {
+              window.Telegram.WebApp.ready();
+              if (typeof window.Telegram.WebApp.expand === 'function') {
+                window.Telegram.WebApp.expand();
               }
             }
           } catch (e) {}
 
+          function armGateFailsafe(){
+            if (gateFailsafeTimer) clearTimeout(gateFailsafeTimer);
+            gateFailsafeTimer = setTimeout(() => {
+              try {
+                const gateVisible = gateWrapEl && window.getComputedStyle(gateWrapEl).display !== 'none';
+                const denyVisible = denyWrapEl && window.getComputedStyle(denyWrapEl).display !== 'none';
+                const contentVisible = publishContentEl && window.getComputedStyle(publishContentEl).display !== 'none';
+                if (gateVisible && !denyVisible && !contentVisible) {
+                  showDenied('Не удалось инициализировать экран. Попробуйте открыть заново.');
+                }
+              } catch (e) {}
+            }, 20000);
+          }
+
+          function clearGateFailsafe(){
+            if (gateFailsafeTimer) {
+              clearTimeout(gateFailsafeTimer);
+              gateFailsafeTimer = null;
+            }
+          }
+
+          function showGate(text){
+            gateWrapEl.style.display = 'flex';
+            gateTextEl.innerText = text || 'Загрузка';
+            denyWrapEl.style.display = 'none';
+            publishContentEl.style.display = 'none';
+          }
+
+          function showContent(){
+            clearGateFailsafe();
+            gateWrapEl.style.display = 'none';
+            denyWrapEl.style.display = 'none';
+            publishContentEl.style.display = 'block';
+          }
+
+          function showDenied(text){
+            clearGateFailsafe();
+            gateWrapEl.style.display = 'none';
+            publishContentEl.style.display = 'none';
+            denyWrapEl.style.display = 'flex';
+            denyWrapEl.innerText = text || 'Публикация историй недоступна.';
+          }
+
+          function parseTelegramProfile(){
+            try {
+              if (!(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user)) {
+                return {};
+              }
+              const user = window.Telegram.WebApp.initDataUnsafe.user || {};
+              return {
+                tg_user_id: user.id || null,
+                username: user.username || null,
+                first_name: user.first_name || null,
+                last_name: user.last_name || null,
+                language_code: user.language_code || null
+              };
+            } catch (e) {
+              return {};
+            }
+          }
+
+          function normalizeTgUserId(value){
+            if (value === null || value === undefined) return null;
+            const asString = String(value).trim();
+            if (!asString) return null;
+            const asNumber = Number(asString);
+            if (!Number.isFinite(asNumber) || asNumber <= 0) return null;
+            return String(Math.trunc(asNumber));
+          }
+
+          function startProcessing(tgProfile){
+            try {
+              if (!sourceUrl) {
+                showDenied('Не найдена ссылка на YouTube.');
+                return;
+              }
+
+              showGate('Запускаем обработку...');
+              const payload = {
+                url: sourceUrl,
+                can_share: true,
+                tg_user_id: normalizeTgUserId((tgProfile && tgProfile.tg_user_id) || tgUserIdFromQuery)
+              };
+              if (tgProfile && tgProfile.username) payload.username = tgProfile.username;
+              if (tgProfile && tgProfile.first_name) payload.first_name = tgProfile.first_name;
+              if (tgProfile && tgProfile.last_name) payload.last_name = tgProfile.last_name;
+              if (tgProfile && tgProfile.language_code) payload.language_code = tgProfile.language_code;
+
+              const fetchOptions = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              };
+
+              let processTimeout = null;
+              let processRequest = null;
+
+              if (typeof AbortController === 'function') {
+                const abortController = new AbortController();
+                processTimeout = setTimeout(() => abortController.abort(), 15000);
+                fetchOptions.signal = abortController.signal;
+                processRequest = fetch('/process', fetchOptions);
+              } else {
+                processRequest = Promise.race([
+                  fetch('/process', fetchOptions),
+                  new Promise((_, reject) => {
+                    processTimeout = setTimeout(() => reject(new Error('timeout')), 15000);
+                  })
+                ]);
+              }
+
+              processRequest
+                .then(r=>r.json().then(data => ({ ok: r.ok, data })))
+                .then(({ ok, data }) => {
+                  if (processTimeout) clearTimeout(processTimeout);
+                  if (!ok || !data || data.error) {
+                    showDenied('Не удалось запустить обработку.');
+                    return;
+                  }
+
+                  const nextJobId = data.job_id || data.id;
+                  if (!nextJobId) {
+                    showDenied('Сервер вернул неполный ответ.');
+                    return;
+                  }
+
+                  jobId = String(nextJobId);
+                  showContent();
+                  check();
+                })
+                .catch((e) => {
+                  if (processTimeout) clearTimeout(processTimeout);
+                  console.error(e);
+                  showDenied('Ошибка сети при запуске обработки.');
+                });
+            } catch (e) {
+              console.error(e);
+              showDenied('Ошибка запуска обработки.');
+            }
+          }
+
+          function waitForTelegramWebApp(timeoutMs){
+            return new Promise((resolve) => {
+              const start = Date.now();
+              function tick(){
+                try {
+                  if (window.Telegram && window.Telegram.WebApp) {
+                    resolve(true);
+                    return;
+                  }
+                  if (Date.now() - start >= timeoutMs) {
+                    resolve(false);
+                    return;
+                  }
+                } catch (e) {
+                  // Ignore errors, continue polling
+                }
+                setTimeout(tick, 120);
+              }
+              tick();
+            });
+          }
+
+          async function runPublishFlow(){
+            const hasWebApp = await waitForTelegramWebApp(4500);
+            if (!hasWebApp) {
+              showDenied('Откройте эту страницу внутри Telegram.');
+              return;
+            }
+
+            let canShare = !!(window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.shareToStory === 'function');
+            if (!canShare) {
+              showGate('Загрузка');
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              canShare = !!(window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.shareToStory === 'function');
+            }
+
+            if (!canShare) {
+              showDenied('Публикация историй недоступна для этого аккаунта.');
+              return;
+            }
+
+            if (jobId) {
+              showContent();
+              check();
+              return;
+            }
+
+            const tgProfile = parseTelegramProfile();
+            startProcessing(tgProfile);
+          }
+
           function showProgress(){
             progressWrap.style.display = 'block';
+          }
+
+          function topStageLabel(stage, done){
+            if (done) return 'Готово';
+            switch(stage){
+              case 'starting':
+              case 'downloading':
+              case 'downloaded':
+                return 'Подготовка (скачивание видео)';
+              case 'segmenting':
+                return 'Подготовка (нарезка на ролики)';
+              case 'transcoding':
+                return 'Обработка роликов';
+              case 'finalizing':
+                return 'Финализация';
+              case 'failed':
+                return 'Ошибка обработки';
+              default:
+                return 'Обработка';
+            }
           }
 
           function updateProgress(done, pct, stage){
@@ -831,72 +1305,184 @@ server.mount_proc '/publish' do |req, res|
             }
             progressBar.style.width = progressPct + '%';
             const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-            const stageLabel = stage ? (' ' + stage) : '';
-            progressText.innerText = done ? 'Готово' : ('Обработка... ' + progressPct + '% (' + elapsed + 's)' + stageLabel);
+            const stageText = topStageLabel(stage, done);
+            progressText.innerText = stageText + ' · ' + progressPct + '% (' + elapsed + 's)';
+          }
+
+          function setPreviewFromVideoId(videoId){
+            if (!videoId) return;
+            if (previewEl.dataset.previewSet === '1' && previewEl.children.length > 0) return;
+            const posterSrc = 'https://img.youtube.com/vi/' + videoId + '/maxresdefault.jpg';
+            const posterFallback = 'https://img.youtube.com/vi/' + videoId + '/hqdefault.jpg';
+            previewEl.innerHTML = '<img src="'+posterSrc+'" alt="preview" onerror="this.onerror=null;this.src=\'' + posterFallback + '\'" style="width:100%;border-radius:18px;background:#0c0c0c">';
+            previewEl.dataset.previewSet = '1';
+          }
+
+          function shareStory(url){
+            try {
+              if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.shareToStory) {
+                window.Telegram.WebApp.shareToStory(url);
+                statusEl.innerText = 'Открыт редактор историй.';
+              } else {
+                alert('Publishing via Telegram WebApp is available only inside Telegram.');
+              }
+            } catch(e){ console.error(e); alert('Ошибка публикации: ' + e.message) }
+          }
+
+          function normalizeParts(parts, fallbackOutput){
+            if (Array.isArray(parts) && parts.length > 0) {
+              return parts
+                .map((part, idx) => {
+                  const normalizedIndex = Number(part && part.index);
+                  return Object.assign({}, part || {}, {
+                    index: Number.isFinite(normalizedIndex) ? normalizedIndex : (idx + 1)
+                  });
+                })
+                .sort((a, b) => {
+                  const indexA = Number(a.index) || 0;
+                  const indexB = Number(b.index) || 0;
+                  if (indexA !== indexB) return indexA - indexB;
+                  const startA = Number(a.start_sec);
+                  const startB = Number(b.start_sec);
+                  if (Number.isFinite(startA) && Number.isFinite(startB)) return startA - startB;
+                  return 0;
+                });
+            }
+            if (fallbackOutput) return [{ index: 1, status: 'done', output: fallbackOutput }];
+            return [];
+          }
+
+          function formatClock(totalSeconds){
+            const sec = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            if (h > 0) {
+              return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            }
+            return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+          }
+
+          function partRangeLabel(part){
+            const start = Number(part.start_sec);
+            const duration = Number(part.duration_sec);
+            if (!Number.isFinite(start) || !Number.isFinite(duration) || duration <= 0) return '';
+            const from = formatClock(start);
+            const to = formatClock(start + duration);
+            return from + '–' + to;
+          }
+
+          function renderParts(parts, videoId, fallbackOutput){
+            const normalized = normalizeParts(parts, fallbackOutput);
+            if (normalized.length === 0) {
+              noteEl.innerText = '';
+              setPreviewFromVideoId(videoId);
+              return;
+            }
+
+            const signature = JSON.stringify(normalized.map(part => [part.index, part.status, part.output, part.progress]));
+            if (signature === lastPartsSignature) return;
+            lastPartsSignature = signature;
+
+            const thumb = videoId ? ('https://img.youtube.com/vi/' + videoId + '/maxresdefault.jpg') : '';
+            const thumbFallback = videoId ? ('https://img.youtube.com/vi/' + videoId + '/hqdefault.jpg') : '';
+            previewEl.innerHTML = '<div class="part-list">' + normalized.map((part, idx) => {
+              const partIndex = part.index || (idx + 1);
+              const hasOutput = !!part.output;
+              const status = part.status || (hasOutput ? 'done' : 'processing');
+              const progress = Math.max(0, Math.min(100, Number(part.progress || (hasOutput ? 100 : 0))));
+              const statusText = status === 'done'
+                ? 'готово'
+                : (status === 'failed' ? 'ошибка' : (status === 'queued' ? 'в очереди' : ('обработка ' + progress + '%')));
+              const timeRange = partRangeLabel(part);
+              const media = thumb ? '<img class="part-video" src="' + thumb + '" alt="preview" onerror="this.onerror=null;this.src=\'' + thumbFallback + '\'">' : '<div class="part-video"></div>';
+              const action = hasOutput
+                ? '<button class="btn primary publish-part" data-url="' + host + '/' + part.output + '">Опубликовать</button>'
+                : '<button class="btn ghost" disabled>Готовится</button>';
+              return '<div class="part-card">'
+                + '<div class="part-head"><div class="part-title">Ролик #' + partIndex + (timeRange ? ' · ' + timeRange : '') + '</div><div class="part-status">' + statusText + '</div></div>'
+                + '<div class="part-progress-track"><div class="part-progress-bar" style="width:' + progress + '%"></div></div>'
+                + media
+                + '<div class="part-actions">' + action + '</div>'
+                + '</div>';
+            }).join('') + '</div>';
+
+            previewEl.querySelectorAll('.publish-part').forEach(btn => {
+              btn.addEventListener('click', () => shareStory(btn.dataset.url));
+            });
+
+            const readyCount = normalized.filter(part => part.status === 'done' && !!part.output).length;
+            noteEl.innerText = 'Частей: ' + normalized.length + ' · готово: ' + readyCount;
           }
 
           function check() {
             fetch('/job_status?job_id=' + encodeURIComponent(jobId)).then(r=>r.json()).then(j=>{
+              if (!startedAtSynced && j.started_at) {
+                const parsedStartedAt = Date.parse(j.started_at);
+                if (!Number.isNaN(parsedStartedAt)) {
+                  startedAt = parsedStartedAt;
+                  startedAtSynced = true;
+                }
+              }
+              renderParts(j.parts, j.video_id, j.output);
               if (j.status === 'done') {
                 statusEl.innerText = 'Готово';
                 updateProgress(true, 100, 'done');
-                const src = '#{HOST}' + '/' + j.output;
-                videoUrl = src;
-                let posterSrc = src.replace(/\.[^.]+$/, '.jpg');
-                if (j.video_id) {
-                  posterSrc = 'https://img.youtube.com/vi/' + j.video_id + '/maxresdefault.jpg';
-                }
-                previewEl.innerHTML = '<img src="'+posterSrc+'" alt="preview" style="width:100%;border-radius:18px;background:#0c0c0c">';
-                publishBtn.style.display = 'inline-block';
-                function tryAutoPublish(){
-                  try{
-                    if (window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.shareToStory === 'function'){
-                      Telegram.WebApp.shareToStory(src);
-                      statusEl.innerText = 'Открыт редактор историй.';
-                      return true;
-                    }
-                  }catch(e){ console.error('autoPublish err', e) }
-                  return false;
-                }
-                // Попробуем авто-вызвать несколько раз с интервалом — иногда WebApp API появляется чуть позже
-                if (!tryAutoPublish()){
-                  let tries=0; const tInt = setInterval(()=>{ tries++; if(tryAutoPublish()||tries>5) { if(tries>5){
-                      // После нескольких неудачных попыток покажем пользователю понятную подсказку и ссылки
-                      const note = document.getElementById('note');
-                      note.innerText = 'Похоже, ваш аккаунт не поддерживает публикацию историй напрямую из WebApp (возможно нет доступа). Вы можете скачать видео и опубликовать вручную.';
-                      const downloadLink = document.getElementById('downloadLink');
-                      downloadLink.href = src; downloadLink.style.display='inline-block';
-                      const copyBtn = document.getElementById('copyLink'); copyBtn.style.display='inline-block';
-                      copyBtn.addEventListener('click', ()=>{ navigator.clipboard.writeText(src).then(()=>{ alert('Ссылка скопирована'); }).catch(()=>{ alert('Не удалось скопировать ссылку'); }); });
-                    } clearInterval(tInt); } }, 500);
+                renderParts(j.parts, j.video_id, j.output);
+              } else if (j.status === 'failed') {
+                statusEl.innerText = 'Ошибка обработки';
+                showProgress();
+                updateProgress(false, j.progress, 'failed');
+                if (j.error) {
+                  noteEl.innerText = 'Ошибка: ' + j.error;
                 }
               } else {
-                statusEl.innerText = 'Обработка...';
+                const preparingStage = j.stage === 'starting' || j.stage === 'downloading' || j.stage === 'downloaded' || j.stage === 'segmenting';
+                statusEl.innerText = preparingStage ? 'Подготовка...' : 'Обработка...';
                 showProgress();
                 updateProgress(false, j.progress, j.stage);
                 setTimeout(check, 2000);
               }
             }).catch(e=>{statusEl.innerText='Ошибка'; console.error(e)});
           }
-          publishBtn.addEventListener('click', ()=>{
-            try {
-              if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.shareToStory) {
-                if (videoUrl) {
-                  window.Telegram.WebApp.shareToStory(videoUrl);
-                }
-              } else {
-                alert('Publishing via Telegram WebApp is available only inside Telegram.');
-              }
-            } catch(e){ console.error(e); alert('Ошибка публикации: '+e.message) }
-          });
-          if (jobId) check(); else statusEl.innerText='No job_id provided';
+
+          if (trustedFromQuery) {
+            if (jobId) {
+              showContent();
+              check();
+            } else {
+              armGateFailsafe();
+              const tgProfile = parseTelegramProfile();
+              startProcessing(tgProfile);
+            }
+          } else {
+            showGate('Проверяем Telegram...');
+            armGateFailsafe();
+            runPublishFlow().catch((e) => {
+              console.error(e);
+              showDenied('Ошибка инициализации Telegram.');
+            });
+          }
         </script>
+        <script>
+          window.__Y2S_PUBLISH__ = {
+            jobId: #{job_id_js},
+            sourceUrl: #{source_url_js},
+            tgUserIdFromQuery: #{tg_user_id_js},
+            trustedFromQuery: #{trusted_js},
+            host: "#{HOST}"
+          };
+        </script>
+        <script src="/publish_app.js?v=20260219_2208"></script>
       </body>
       </html>
     HTML
 
     res.status = 200
     res['Content-Type'] = 'text/html'
+    res['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    res['Pragma'] = 'no-cache'
+    res['Expires'] = '0'
     res.body = html
   rescue => e
     server.logger.error "PUBLISH_ERR #{e.message}"

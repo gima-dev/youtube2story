@@ -1,8 +1,8 @@
-async function postProcess(url){
+async function postProcess(url, canShare){
   const res = await fetch('/process', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({url})
+    body: JSON.stringify({url, can_share: !!canShare})
   })
   return res.json()
 }
@@ -11,10 +11,10 @@ async function postProcess(url){
 let _readyCalled = false
 function callTelegramReady(){
   try{
-    if(window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.ready === 'function'){
-      Telegram.WebApp.ready()
-      if(typeof Telegram.WebApp.expand === 'function'){
-        try{ Telegram.WebApp.expand() }catch(e){}
+    if(window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.ready === 'function'){
+      window.Telegram.WebApp.ready()
+      if(typeof window.Telegram.WebApp.expand === 'function'){
+        try{ window.Telegram.WebApp.expand() }catch(e){}
       }
       _readyCalled = true
         return true
@@ -75,15 +75,21 @@ document.getElementById('process').addEventListener('click', async ()=>{
   status.textContent = 'Отправка на обработку...'
 
   try{
-    const data = await postProcess(url)
+    const canShare = !!(window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.shareToStory === 'function')
+    if(!canShare){
+      status.textContent = 'Публикация историй недоступна для этого аккаунта.'
+      return
+    }
+
+    const data = await postProcess(url, canShare)
     if(data.error){ status.textContent = 'Ошибка: ' + data.error; return }
     // если сервер вернул прямой processed_url — используем его сразу
     if(data.processed_url){
       const processed = data.processed_url
       status.innerHTML = 'Готово. Попробовать опубликовать: <a href="'+processed+'">файл</a>'
-      if(window.Telegram && Telegram.WebApp && Telegram.WebApp.shareToStory){
+      if(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.shareToStory){
         try{
-          await Telegram.WebApp.shareToStory({url: processed})
+          await window.Telegram.WebApp.shareToStory({url: processed})
           status.textContent = 'Открылся редактор историй.'
         }catch(e){
           status.textContent = 'Не удалось вызвать shareToStory: ' + e.message
@@ -105,7 +111,7 @@ document.getElementById('process').addEventListener('click', async ()=>{
       })
       // если мы внутри Telegram, попробуем открыть страницу в WebView (замена действия)
       try{
-        if(window.Telegram && Telegram.WebApp){
+        if(window.Telegram && window.Telegram.WebApp){
           // просто навигация должна работать в WebView
         }
       }catch(e){}

@@ -147,16 +147,28 @@ Telegram::Bot::Client.run(TOKEN) do |bot|
         kb = { inline_keyboard: [[{ text: 'Опубликовать', web_app: { url: open_url } }]] }
         
         if video_id
-          thumbnail_url = "https://img.youtube.com/vi/#{video_id}/maxresdefault.jpg"
-          begin
-            bot.api.send_photo(
-              chat_id: chat_id,
-              photo: thumbnail_url,
-              caption: '🎬 Готово к публикации',
-              reply_markup: kb.to_json
-            )
-          rescue => e
-            puts "Failed to send photo, fallback to text: #{e.class}: #{e}" rescue nil
+          thumbnail_candidates = [
+            "https://img.youtube.com/vi/#{video_id}/maxresdefault.jpg",
+            "https://img.youtube.com/vi/#{video_id}/hqdefault.jpg"
+          ]
+
+          sent_photo = false
+          thumbnail_candidates.each do |thumbnail_url|
+            begin
+              bot.api.send_photo(
+                chat_id: chat_id,
+                photo: thumbnail_url,
+                caption: '🎬 Готово к публикации',
+                reply_markup: kb.to_json
+              )
+              sent_photo = true
+              break
+            rescue => e
+              puts "Failed to send thumbnail #{thumbnail_url}: #{e.class}: #{e}" rescue nil
+            end
+          end
+
+          unless sent_photo
             bot.api.send_message(chat_id: chat_id, text: '🎬 Готово к публикации', reply_markup: kb.to_json)
           end
         else
