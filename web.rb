@@ -698,8 +698,8 @@ server.mount_proc '/publish' do |req, res|
             --ink: #111210;
             --muted: rgba(17, 18, 16, 0.7);
             --paper: #f7f3ec;
-            --accent: #f65c37;
-            --accent-dark: #e14f2b;
+            --accent: #2EA4E6;
+            --accent-dark: #1e8fcf;
             --line: rgba(17, 18, 16, 0.12);
           }
 
@@ -729,13 +729,13 @@ server.mount_proc '/publish' do |req, res|
           }
 
           body::before {
-            background: radial-gradient(circle, rgba(246, 92, 55, 0.5), rgba(246, 92, 55, 0));
+            background: radial-gradient(circle, rgba(46,164,230,0.35), rgba(46,164,230,0));
             top: -140px;
             right: -140px;
           }
 
           body::after {
-            background: radial-gradient(circle, rgba(255, 196, 88, 0.45), rgba(255, 196, 88, 0));
+            background: radial-gradient(circle, rgba(136,204,255,0.28), rgba(136,204,255,0));
             bottom: -160px;
             left: -140px;
             animation-delay: -5s;
@@ -832,7 +832,7 @@ server.mount_proc '/publish' do |req, res|
           .progress-bar {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, #f65c37, #ff9448);
+            background: linear-gradient(90deg, var(--accent), #6fc8ff);
           }
 
           .progress-text {
@@ -894,7 +894,7 @@ server.mount_proc '/publish' do |req, res|
           .part-progress-bar {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, #f65c37, #ff9448);
+            background: linear-gradient(90deg, var(--accent), #6fc8ff);
           }
 
           .part-actions {
@@ -945,7 +945,7 @@ server.mount_proc '/publish' do |req, res|
           .btn.primary {
             background: var(--accent);
             color: #fff;
-            box-shadow: 0 16px 30px rgba(246, 92, 55, 0.25);
+            box-shadow: 0 16px 30px rgba(46,164,230,0.18);
           }
 
           .btn.primary:hover {
@@ -978,7 +978,7 @@ server.mount_proc '/publish' do |req, res|
             width: 34px;
             height: 34px;
             border-radius: 50%;
-            border: 3px solid rgba(246, 92, 55, 0.18);
+            border: 3px solid rgba(46,164,230,0.14);
             border-top-color: var(--accent);
             animation: spin 0.8s linear infinite;
           }
