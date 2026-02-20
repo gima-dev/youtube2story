@@ -697,7 +697,7 @@ server.mount_proc '/publish' do |req, res|
           :root {
             --ink: #111210;
             --muted: rgba(17, 18, 16, 0.7);
-            --paper: #f7f3ec;
+            --paper: #f7fbfe;
             --accent: #2EA4E6;
             --accent-dark: #1e8fcf;
             --line: rgba(17, 18, 16, 0.12);
@@ -710,7 +710,7 @@ server.mount_proc '/publish' do |req, res|
             min-height: 100vh;
             font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
             color: var(--ink);
-            background: radial-gradient(120% 120% at 10% 0%, #fde7d8 0%, var(--paper) 50%, #f5f1ea 100%);
+            background: linear-gradient(180deg, #eef3f8 0%, var(--paper) 100%);
           }
 
           body::before,
