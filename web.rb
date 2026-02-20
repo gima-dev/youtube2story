@@ -841,7 +841,8 @@ server.mount_proc '/publish' do |req, res|
             text-transform: uppercase;
             letter-spacing: 0.18em;
             font-size: 12px;
-            color: var(--muted);
+            color: var(--ink);
+            font-weight: 700;
           }
 
           h1 {
@@ -912,7 +913,7 @@ server.mount_proc '/publish' do |req, res|
           .progress-bar {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, #f65c37 0%, #fbbf7c 60%, #ffd8be 100%);
+            background: linear-gradient(90deg, #ffd8be 0%, #fbbf7c 40%, #f65c37 100%);
             border-radius: 999px;
             box-shadow: 0 1px 4px rgba(246,92,55,0.08);
             transition: width 280ms cubic-bezier(.4,1,.7,1);
@@ -977,7 +978,7 @@ server.mount_proc '/publish' do |req, res|
           .part-progress-bar {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, #f65c37 0%, #fbbf7c 60%, #ffd8be 100%);
+            background: linear-gradient(90deg, #ffd8be 0%, #fbbf7c 40%, #f65c37 100%);
             border-radius: 999px;
             box-shadow: 0 1px 4px rgba(246,92,55,0.08);
             transition: width 280ms cubic-bezier(.4,1,.7,1);
