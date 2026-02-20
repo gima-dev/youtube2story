@@ -17,11 +17,6 @@ require_relative 'workers/process_worker'
 HOST = ENV['WEBAPP_HOST'] || 'https://youtube.gimadev.win'
 # По умолчанию backend слушает локально на порту 8080 (nginx терминирует TLS)
 PORT = ENV['PORT'] ? ENV['PORT'].to_i : 8080
-
-APP_ROOT = File.expand_path(__dir__)
-OUTPUT_DIR = File.join(APP_ROOT, 'web_public', 'outputs')
-FileUtils.mkdir_p(OUTPUT_DIR)
-
 def db_available?
   db_url = ENV['DATABASE_URL']
   !db_url.nil? && !db_url.empty?
@@ -414,15 +409,17 @@ def probe_youtube_duration_via_api(video_id)
   api_key = ENV['YOUTUBE_API_KEY']
   return nil unless api_key && !api_key.empty?
 
-  uri = URI("https://www.googleapis.com/youtube/v3/videos?id=#{video_id}&part=contentDetails&key=#{api_key}")
+  uri = URI("https://www.googleapis.com/youtube/v3/videos?id=#{video_id}&part=contentDetails,snippet&key=#{api_key}")
   response = Net::HTTP.get_response(uri)
   return nil unless response.is_a?(Net::HTTPSuccess)
 
   data = JSON.parse(response.body)
   return nil unless data['items'] && data['items'].any?
 
-  iso_duration = data.dig('items', 0, 'contentDetails', 'duration')
-  parse_iso8601_duration(iso_duration)
+  item = data['items'][0]
+  iso_duration = item.dig('contentDetails', 'duration')
+  title = item.dig('snippet', 'title')
+  { duration: parse_iso8601_duration(iso_duration), title: title }
 rescue => e
   server.logger.warn("probe_youtube_duration_via_api failed: #{e}")
   nil
@@ -452,12 +449,14 @@ def probe_youtube_duration(youtube_url)
   
   # Try API first (faster and more reliable)
   if video_id
-    duration = probe_youtube_duration_via_api(video_id)
-    return duration if duration
+    info = probe_youtube_duration_via_api(video_id)
+    return info if info
   end
 
   # Fallback to yt-dlp
-  probe_youtube_duration_yt_dlp(youtube_url)
+  dur = probe_youtube_duration_yt_dlp(youtube_url)
+  return { duration: dur, title: nil } if dur
+  nil
 end
 
 def extract_youtube_id(url)
@@ -568,8 +567,18 @@ server.mount_proc "/process" do |req, res|
 
     jid = ProcessWorker.perform_async(youtube_url, tg_user_id)
 
-    # Probe video duration and pre-compute parts before job starts
-    prefetched_duration = probe_youtube_duration(youtube_url)
+    # Probe video info (duration + title) and pre-compute parts before job starts
+    prefetched = probe_youtube_duration(youtube_url)
+    # normalize prefetched into duration and title
+    prefetched_duration = nil
+    prefetched_title = nil
+    if prefetched.is_a?(Hash)
+      prefetched_duration = prefetched[:duration] || prefetched['duration']
+      prefetched_title = prefetched[:title] || prefetched['title']
+    else
+      prefetched_duration = prefetched
+    end
+
     video_id = extract_youtube_id(youtube_url)
     segment_length = ENV['STORY_MAX_SECONDS'].to_i
     segment_length = 60 if segment_length <= 0
@@ -578,6 +587,7 @@ server.mount_proc "/process" do |req, res|
     initial_metadata = {}
     initial_metadata['parts'] = JSON.generate(segments) if segments && segments.any?
     initial_metadata['video_id'] = video_id if video_id
+    initial_metadata['title'] = prefetched_title if prefetched_title
     metadata_json = JSON.generate(initial_metadata)
 
     if db_available?
@@ -603,7 +613,9 @@ server.mount_proc "/process" do |req, res|
 
     res.status = 202
     res['Content-Type'] = 'application/json'
-    res.body =({ job_id: jid, status: 'queued' }.to_json)
+    resp_body = { job_id: jid, status: 'queued' }
+    resp_body[:title] = prefetched_title if prefetched_title
+    res.body = resp_body.to_json
   rescue => e
     res.status = 500
     res['Content-Type'] = 'application/json'
@@ -626,7 +638,7 @@ server.mount_proc "/job_status" do |req, res|
         db_row = nil
         with_db do |conn|
           db_row = conn.exec_params(
-            "SELECT status, progress_percent, stage, metadata->>'output' AS output, metadata->>'video_id' AS video_id, metadata->>'parts' AS parts, error_message, started_at FROM jobs WHERE sidekiq_jid = $1 LIMIT 1",
+            "SELECT jobs.status, jobs.progress_percent, jobs.stage, jobs.metadata->>'output' AS output, jobs.metadata->>'video_id' AS video_id, jobs.metadata->>'parts' AS parts, jobs.metadata->'bot_message' AS bot_message, jobs.error_message, jobs.started_at, users.telegram_user_id AS tg_user_id FROM jobs JOIN users ON users.id = jobs.user_id WHERE jobs.sidekiq_jid = $1 LIMIT 1",
             [job_id]
           ).first
         end
@@ -639,6 +651,13 @@ server.mount_proc "/job_status" do |req, res|
             parts = nil
           end
 
+          bot_message = nil
+          begin
+            bot_message = JSON.parse(db_row['bot_message']) if db_row['bot_message']
+          rescue
+            bot_message = nil
+          end
+
           payload = {
             status: db_row['status'],
             progress: db_row['progress_percent']&.to_i,
@@ -647,9 +666,65 @@ server.mount_proc "/job_status" do |req, res|
             video_id: db_row['video_id'],
             parts: parts,
             error: db_row['error_message'],
-            started_at: db_row['started_at']
+            started_at: db_row['started_at'],
+            tg_user_id: db_row['tg_user_id'],
+            bot_message: bot_message
           }
           payload[:progress] = 100 if payload[:status] == 'done'
+
+          # Try to notify/edit bot message with progress if job metadata has bot_message mapping
+          begin
+            if payload[:bot_message] && payload[:bot_message].is_a?(Hash) && payload[:progress]
+              mapping = payload[:bot_message]
+              if mapping['chat_id'] && mapping['message_id']
+                token = ENV['TELEGRAM_BOT_TOKEN'] || ENV['TELEGRAM_TOKEN'] || ENV['BOT_TOKEN']
+                if token
+                  api_base = "https://api.telegram.org/bot#{token}"
+                  caption = "🎬 Готово к публикации #{payload[:progress]}%"
+                  begin
+                    uri = URI.parse(api_base + "/editMessageCaption")
+                    req = Net::HTTP::Post.new(uri)
+                    req.set_form_data({ chat_id: mapping['chat_id'], message_id: mapping['message_id'], caption: caption })
+                    Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
+                      resp = http.request(req)
+                      begin
+                        body = resp.body.to_s
+                        parsed = JSON.parse(body) rescue nil
+                        unless resp.is_a?(Net::HTTPSuccess) && parsed && parsed['ok']
+                          server.logger.error("TELEGRAM_EDIT_RESPONSE editMessageCaption code=#{resp.code} body=#{body}")
+                        end
+                      rescue => e
+                        server.logger.error("TELEGRAM_EDIT_LOG_ERR #{e.class}: #{e.message}")
+                      end
+                    end
+                  rescue => e
+                    begin
+                      uri2 = URI.parse(api_base + "/editMessageText")
+                      req2 = Net::HTTP::Post.new(uri2)
+                      req2.set_form_data({ chat_id: mapping['chat_id'], message_id: mapping['message_id'], text: caption })
+                      Net::HTTP.start(uri2.hostname, uri2.port, use_ssl: uri2.scheme == 'https') do |http|
+                        resp2 = http.request(req2)
+                        begin
+                          body2 = resp2.body.to_s
+                          parsed2 = JSON.parse(body2) rescue nil
+                          unless resp2.is_a?(Net::HTTPSuccess) && parsed2 && parsed2['ok']
+                            server.logger.error("TELEGRAM_EDIT_RESPONSE editMessageText code=#{resp2.code} body=#{body2}")
+                          end
+                        rescue => e2
+                          server.logger.error("TELEGRAM_EDIT_LOG_ERR #{e2.class}: #{e2.message}")
+                        end
+                      end
+                    rescue => e2
+                      server.logger.error("TELEGRAM_EDIT_ERR #{e2.class}: #{e2.message}")
+                    end
+                  end
+                end
+              end
+            end
+          rescue => e
+            server.logger.error("NOTIFY_BOT_ERR #{e.class}: #{e.message}")
+          end
+
           res.status = 200
           res['Content-Type'] = 'application/json'
           res.body = payload.to_json
@@ -681,6 +756,10 @@ server.mount_proc '/publish' do |req, res|
     job_id_js = (job_id || '').to_json
     source_url_js = source_url.to_json
     tg_user_id_js = (tg_user_id || '').to_json
+    chat_id_js = (req.query['chat_id'] || '').to_json
+    message_id_js = (req.query['message_id'] || '').to_json
+    chat_id_from_query_js = (req.query['chat_id'] || '').to_json
+    message_id_from_query_js = (req.query['message_id'] || '').to_json
     trusted_js = trusted.to_json
     # simple HTML page that shows processed video if ready
     html = <<~HTML
@@ -697,9 +776,9 @@ server.mount_proc '/publish' do |req, res|
           :root {
             --ink: #111210;
             --muted: rgba(17, 18, 16, 0.7);
-            --paper: #f7fbfe;
-            --accent: #2EA4E6;
-            --accent-dark: #1e8fcf;
+            --paper: #fffaf9;
+            --accent: #f65c37;
+            --accent-dark: #e14f2b;
             --line: rgba(17, 18, 16, 0.12);
           }
 
@@ -710,7 +789,7 @@ server.mount_proc '/publish' do |req, res|
             min-height: 100vh;
             font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
             color: var(--ink);
-            background: linear-gradient(180deg, #eef3f8 0%, var(--paper) 100%);
+            background: linear-gradient(180deg, #fff4f2 0%, var(--paper) 100%);
           }
 
           body::before,
@@ -729,13 +808,13 @@ server.mount_proc '/publish' do |req, res|
           }
 
           body::before {
-            background: radial-gradient(circle, rgba(46,164,230,0.35), rgba(46,164,230,0));
+            background: radial-gradient(circle, rgba(246,92,55,0.35), rgba(246,92,55,0));
             top: -140px;
             right: -140px;
           }
 
           body::after {
-            background: radial-gradient(circle, rgba(136,204,255,0.28), rgba(136,204,255,0));
+            background: radial-gradient(circle, rgba(226,111,86,0.28), rgba(226,111,86,0));
             bottom: -160px;
             left: -140px;
             animation-delay: -5s;
@@ -832,7 +911,10 @@ server.mount_proc '/publish' do |req, res|
           .progress-bar {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, var(--accent), #6fc8ff);
+            background: linear-gradient(90deg, #f65c37 0%, #fbbf7c 60%, #ffd8be 100%);
+            border-radius: 999px;
+            box-shadow: 0 1px 4px rgba(246,92,55,0.08);
+            transition: width 280ms cubic-bezier(.4,1,.7,1);
           }
 
           .progress-text {
@@ -894,7 +976,10 @@ server.mount_proc '/publish' do |req, res|
           .part-progress-bar {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, var(--accent), #6fc8ff);
+            background: linear-gradient(90deg, #f65c37 0%, #fbbf7c 60%, #ffd8be 100%);
+            border-radius: 999px;
+            box-shadow: 0 1px 4px rgba(246,92,55,0.08);
+            transition: width 280ms cubic-bezier(.4,1,.7,1);
           }
 
           .part-actions {
@@ -1048,10 +1133,12 @@ server.mount_proc '/publish' do |req, res|
             </div>
           </section>
         </main>
-        <script type="text/plain" id="publish-inline-legacy">
+          <script type="text/plain" id="publish-inline-legacy">
           let jobId = #{job_id_js};
           const sourceUrl = #{source_url_js};
           const tgUserIdFromQuery = #{tg_user_id_js};
+          const chatIdFromQuery = #{chat_id_js};
+          const messageIdFromQuery = #{message_id_js};
           const trustedFromQuery = #{trusted_js};
           const host = "#{HOST}";
           const gateWrapEl = document.getElementById('gateWrap');
@@ -1206,6 +1293,18 @@ server.mount_proc '/publish' do |req, res|
                   }
 
                   jobId = String(nextJobId);
+                  // If the embed was opened from a bot message and contains chat/message id,
+                  // attach the bot message mapping to the job so the server can edit it.
+                  try {
+                    if (chatIdFromQuery && messageIdFromQuery) {
+                      fetch('/admin/attach_bot_message', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ job_id: jobId, chat_id: chatIdFromQuery, message_id: messageIdFromQuery })
+                      }).catch(e=>{console.error('attach_bot_message failed', e)});
+                    }
+                  } catch (e) { console.error(e) }
+
                   showContent();
                   check();
                 })
@@ -1469,6 +1568,8 @@ server.mount_proc '/publish' do |req, res|
             jobId: #{job_id_js},
             sourceUrl: #{source_url_js},
             tgUserIdFromQuery: #{tg_user_id_js},
+            chatIdFromQuery: #{chat_id_from_query_js},
+            messageIdFromQuery: #{message_id_from_query_js},
             trustedFromQuery: #{trusted_js},
             host: "#{HOST}"
           };
@@ -1503,6 +1604,50 @@ server.mount_proc "/__ping" do |req, res|
     res.status = 500
     res['Content-Type'] = 'application/json'
     res.body =({ ok: false }.to_json)
+  end
+end
+
+server.mount_proc "/admin/attach_bot_message" do |req, res|
+  begin
+    body = req.body.to_s
+    data = JSON.parse(body) rescue {}
+    job_id = data['job_id']
+    chat_id = data['chat_id']
+    message_id = data['message_id']
+
+    if job_id.nil? || chat_id.nil? || message_id.nil?
+      res.status = 400
+      res['Content-Type'] = 'application/json'
+      res.body =({ ok: false, error: 'missing job_id/chat_id/message_id' }.to_json)
+      next
+    end
+
+    if db_available?
+      with_db do |conn|
+        # Attach bot message mapping into jobs.metadata.bot_message
+        begin
+          mapping_json = { bot_message: { chat_id: chat_id, message_id: message_id } }.to_json
+          updated = conn.exec_params("UPDATE jobs SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE sidekiq_jid = $2", [mapping_json, job_id])
+          if updated.cmd_tuples == 0
+            res.status = 404
+            res['Content-Type'] = 'application/json'
+            res.body =({ ok: false, error: 'job not found' }.to_json)
+            next
+          end
+        rescue => e
+          server.logger.error("ATTACH_BOT_MSG_ERR #{e.class}: #{e.message}")
+        end
+      end
+    end
+
+    res.status = 200
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: true }.to_json)
+  rescue => e
+    server.logger.error "ADMIN_ATTACH_ERR #{e.class}: #{e.message}"
+    res.status = 500
+    res['Content-Type'] = 'application/json'
+    res.body =({ ok: false, error: e.message }.to_json)
   end
 end
 

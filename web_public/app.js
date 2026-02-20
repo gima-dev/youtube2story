@@ -83,6 +83,15 @@ document.getElementById('process').addEventListener('click', async ()=>{
 
     const data = await postProcess(url, canShare)
     if(data.error){ status.textContent = 'Ошибка: ' + data.error; return }
+    // If server returned video title, show it in eyebrow (same style as before)
+    try{
+      if(data.title){
+        const brow = document.querySelector('.eyebrow')
+        if(brow) brow.innerText = data.title
+        // also update document title
+        try{ document.title = data.title }catch(e){}
+      }
+    }catch(e){}
     // если сервер вернул прямой processed_url — используем его сразу
     if(data.processed_url){
       const processed = data.processed_url

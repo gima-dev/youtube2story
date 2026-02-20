@@ -211,15 +211,17 @@ class ProcessWorker
     api_key = ENV['YOUTUBE_API_KEY']
     return nil unless api_key && !api_key.empty?
 
-    uri = URI("https://www.googleapis.com/youtube/v3/videos?id=#{video_id}&part=contentDetails&key=#{api_key}")
+    uri = URI("https://www.googleapis.com/youtube/v3/videos?id=#{video_id}&part=contentDetails,snippet&key=#{api_key}")
     response = Net::HTTP.get_response(uri)
     return nil unless response.is_a?(Net::HTTPSuccess)
 
     data = JSON.parse(response.body)
     return nil unless data['items'] && data['items'].any?
 
-    iso_duration = data.dig('items', 0, 'contentDetails', 'duration')
-    parse_iso8601_duration(iso_duration)
+    item = data['items'][0]
+    iso_duration = item.dig('contentDetails', 'duration')
+    title = item.dig('snippet', 'title')
+    { duration: parse_iso8601_duration(iso_duration), title: title }
   rescue => e
     Sidekiq.logger.warn("ProcessWorker: probe_youtube_duration_via_api failed: #{e}")
     nil
@@ -249,8 +251,8 @@ class ProcessWorker
     
     # Try API first (faster and more reliable)
     if video_id
-      duration = probe_youtube_duration_via_api(video_id)
-      return duration if duration
+      info = probe_youtube_duration_via_api(video_id)
+      return info[:duration] if info && (info[:duration] || info['duration'])
     end
 
     # Fallback to yt-dlp
