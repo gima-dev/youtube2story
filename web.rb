@@ -638,7 +638,7 @@ server.mount_proc "/job_status" do |req, res|
         db_row = nil
         with_db do |conn|
           db_row = conn.exec_params(
-            "SELECT jobs.status, jobs.progress_percent, jobs.stage, jobs.metadata->>'output' AS output, jobs.metadata->>'video_id' AS video_id, jobs.metadata->>'parts' AS parts, jobs.metadata->'bot_message' AS bot_message, jobs.error_message, jobs.started_at, users.telegram_user_id AS tg_user_id FROM jobs JOIN users ON users.id = jobs.user_id WHERE jobs.sidekiq_jid = $1 LIMIT 1",
+            "SELECT jobs.status, jobs.progress_percent, jobs.stage, jobs.metadata->>'output' AS output, jobs.metadata->>'video_id' AS video_id, jobs.metadata->>'parts' AS parts, jobs.metadata->'bot_message' AS bot_message, jobs.metadata->>'title' AS title, jobs.error_message, jobs.started_at, users.telegram_user_id AS tg_user_id FROM jobs JOIN users ON users.id = jobs.user_id WHERE jobs.sidekiq_jid = $1 LIMIT 1",
             [job_id]
           ).first
         end
@@ -664,6 +664,7 @@ server.mount_proc "/job_status" do |req, res|
             stage: db_row['stage'],
             output: db_row['output'],
             video_id: db_row['video_id'],
+              title: db_row['title'],
             parts: parts,
             error: db_row['error_message'],
             started_at: db_row['started_at'],
@@ -1114,7 +1115,8 @@ server.mount_proc '/publish' do |req, res|
 
             <div id="denyWrap" class="denied-wrap"></div>
 
-            <div id="publishContent">
+              <div id="publishContent">
+                <div class="eyebrow" id="videoTitle">YouTube to Story</div>
               <div class="status-row">
                 <div>
                   <div id="status">Загрузка...</div>

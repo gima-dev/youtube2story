@@ -439,6 +439,10 @@
     function check() {
       attachBotMessageIfNeeded();
       fetch('/job_status?job_id=' + encodeURIComponent(jobId)).then(r=>r.json()).then(j=>{
+        try{
+          const titleEl = document.getElementById('videoTitle');
+          if (titleEl && j && j.title) titleEl.innerText = j.title;
+        }catch(e){}
         // Всегда синхронизируем startedAt, если сервер вернул started_at
         if (j.started_at) {
           const parsedStartedAt = Date.parse(j.started_at);
