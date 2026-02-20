@@ -1107,6 +1107,11 @@ server.mount_proc '/publish' do |req, res|
       </head>
       <body>
         <main class="shell">
+          <header class="hero">
+            <div class="eyebrow" id="videoTitle">YOUTUBE TO STORY</div>
+            <h1>История готовится</h1>
+            <p>Мы проверим статус обработки и откроем редактор в Telegram, когда файл будет готов.</p>
+          </header>
           <section class="card">
             <div id="gateWrap" class="gate-wrap">
               <div class="spinner"></div>
@@ -1116,7 +1121,6 @@ server.mount_proc '/publish' do |req, res|
             <div id="denyWrap" class="denied-wrap"></div>
 
               <div id="publishContent">
-                <div class="eyebrow" id="videoTitle">YouTube to Story</div>
               <div class="status-row">
                 <div>
                   <div id="status">Загрузка...</div>
