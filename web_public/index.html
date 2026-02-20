@@ -9,13 +9,14 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:opsz@8..144&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --ink: #111210;
-      --muted: rgba(17, 18, 16, 0.7);
-      --paper: #f7f3ec;
-      --mist: #efe8dd;
-      --accent: #f65c37;
-      --accent-dark: #e14f2b;
-      --line: rgba(17, 18, 16, 0.12);
+      --tg-blue: #2EA4E6;
+      --tg-blue-600: #1e8fcf;
+      --muted: #6b7b87;
+      --bg: #ffffff;
+      --surface: #f7f9fb;
+      --line: rgba(60,80,100,0.08);
+      --radius: 14px;
+      --shadow: 0 6px 18px rgba(16,24,32,0.06);
     }
 
     * { box-sizing: border-box; }
@@ -23,183 +24,70 @@
     body {
       margin: 0;
       min-height: 100vh;
-      font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
-      color: var(--ink);
-      background: radial-gradient(120% 120% at 10% 0%, #fde7d8 0%, var(--paper) 50%, #f5f1ea 100%);
-    }
-
-    body::before,
-    body::after {
-      content: "";
-      position: fixed;
-      width: 42vw;
-      height: 42vw;
-      max-width: 520px;
-      max-height: 520px;
-      border-radius: 50%;
-      filter: blur(1px);
-      opacity: 0.22;
-      z-index: 0;
-      pointer-events: none;
-      animation: drift 14s ease-in-out infinite;
-    }
-
-    body::before {
-      background: radial-gradient(circle, rgba(246, 92, 55, 0.5), rgba(246, 92, 55, 0));
-      top: -120px;
-      right: -120px;
-    }
-
-    body::after {
-      background: radial-gradient(circle, rgba(255, 196, 88, 0.45), rgba(255, 196, 88, 0));
-      bottom: -160px;
-      left: -120px;
-      animation-delay: -5s;
+      font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      color: #09101a;
+      background: linear-gradient(180deg, #eef3f8 0%, #f7fbfe 100%);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
     .shell {
-      position: relative;
-      z-index: 1;
       max-width: 720px;
-      margin: 0 auto;
-      padding: 48px 20px 64px;
-      display: grid;
-      gap: 28px;
-    }
-
-    .hero {
-      display: grid;
-      gap: 12px;
-      animation: rise 0.8s ease both;
-    }
-
-    .eyebrow {
-      text-transform: uppercase;
-      letter-spacing: 0.18em;
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    h1 {
-      margin: 0;
-      font-family: "Instrument Serif", "Times New Roman", serif;
-      font-weight: 400;
-      font-size: clamp(32px, 5vw, 52px);
-      line-height: 1.05;
-    }
-
-    .hero p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 15px;
-      max-width: 560px;
-    }
-
-    .card {
-      background: rgba(255, 255, 255, 0.7);
-      border: 1px solid var(--line);
-      border-radius: 24px;
-      padding: 24px;
+      margin: 18px auto;
+      padding: 18px;
       display: grid;
       gap: 16px;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 20px 60px rgba(17, 18, 16, 0.08);
-      animation: rise 0.8s ease both;
-      animation-delay: 0.1s;
     }
 
-    .field {
+    .hero { padding: 6px 4px; }
+    .eyebrow { color: var(--muted); font-size: 12px; }
+    h1 { margin: 6px 0 0; font-size: 22px; }
+    .hero p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+
+    .card {
+      background: var(--bg);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+      border: 1px solid var(--line);
       display: grid;
-      gap: 8px;
+      gap: 12px;
     }
 
-    .label {
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.16em;
-      color: var(--muted);
-    }
+    .field { display: grid; gap: 6px; }
+    .label { color: var(--muted); font-size: 12px; }
 
     input {
       width: 100%;
-      padding: 14px 16px;
-      border-radius: 14px;
-      border: 1px solid var(--line);
-      background: #fff;
-      font-size: 16px;
-      font-family: inherit;
-      transition: border 0.2s ease, box-shadow 0.2s ease;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(10,20,30,0.06);
+      background: var(--surface);
+      font-size: 15px;
     }
 
-    input:focus {
-      outline: none;
-      border-color: rgba(246, 92, 55, 0.6);
-      box-shadow: 0 0 0 3px rgba(246, 92, 55, 0.15);
-    }
+    input:focus { outline: none; box-shadow: 0 4px 12px rgba(46,164,230,0.12); border-color: var(--tg-blue-600); }
 
-    .actions {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
-    }
+    .actions { display: flex; gap: 10px; align-items: center; }
 
-    .btn {
-      border-radius: 999px;
-      padding: 12px 18px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      border: 1px solid transparent;
-      font-family: inherit;
-      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-    }
-
+    .btn { cursor: pointer; font-weight: 600; border: none; }
     .btn.primary {
-      background: var(--accent);
-      color: #fff;
-      box-shadow: 0 16px 30px rgba(246, 92, 55, 0.25);
+      background: var(--tg-blue);
+      color: white;
+      padding: 10px 14px;
+      border-radius: 999px;
+      box-shadow: 0 8px 20px rgba(46,164,230,0.18);
     }
+    .btn.ghost { background: transparent; color: var(--muted); padding: 8px 12px; border-radius: 999px; }
 
-    .btn.primary:hover {
-      background: var(--accent-dark);
-      transform: translateY(-1px);
-    }
+    #status { min-height: 20px; color: var(--muted); font-size: 13px; }
 
-    .btn.ghost {
-      background: transparent;
-      border-color: var(--line);
-      color: var(--ink);
-    }
+    .tips { font-size: 13px; color: var(--muted); }
 
-    #status {
-      min-height: 20px;
-      color: var(--muted);
-      font-size: 14px;
-    }
+    .foot { font-size: 12px; color: var(--muted); text-align: center; padding: 6px 0; }
 
-    .tips {
-      display: grid;
-      gap: 8px;
-      padding: 14px 16px;
-      border-radius: 16px;
-      background: rgba(17, 18, 16, 0.04);
-      font-size: 13px;
-      color: var(--muted);
-    }
-
-    .foot {
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    @keyframes rise {
-      from { opacity: 0; transform: translateY(12px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes drift {
-      0%, 100% { transform: translate(0, 0); }
-      50% { transform: translate(-14px, 10px); }
+    @media (min-width: 900px) {
+      .shell { margin-top: 28px; }
     }
   </style>
 </head>
