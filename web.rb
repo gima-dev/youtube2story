@@ -1109,8 +1109,6 @@ server.mount_proc '/publish' do |req, res|
         <main class="shell">
           <header class="hero">
             <div class="eyebrow" id="videoTitle">YOUTUBE TO STORY</div>
-            <h1>История готовится</h1>
-            <p>Мы проверим статус обработки и откроем редактор в Telegram, когда файл будет готов.</p>
           </header>
           <section class="card">
             <div id="gateWrap" class="gate-wrap">
